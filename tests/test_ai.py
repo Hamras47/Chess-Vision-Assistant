@@ -33,6 +33,13 @@ def test_exact_e4_e5_position_reconstruction():
  placement['e5']='black_pawn'; placement['e4']='white_pawn'; board=build_board(parse(payload(placement)))
  assert board.board_fen()=='rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR'
  assert board.piece_at(chess.E4).symbol()=='P' and board.piece_at(chess.E5).symbol()=='p' and board.piece_at(chess.E2) is None and board.piece_at(chess.E7) is None
+def test_absolute_ai_square_keys_produce_same_fen_in_both_orientations():
+ positions=[]
+ for orientation in ('white_bottom','black_bottom'):
+  data=payload({'e1':'white_king','e8':'black_king','g8':'black_knight','e4':'white_pawn'})
+  data['orientation']=orientation
+  positions.append(build_board(parse(data)).fen())
+ assert positions[0]==positions[1]
 def test_recognition_pipeline_with_mock_api(tmp_path,monkeypatch):
  data=payload({'e1':'white_king','e8':'black_king'}); monkeypatch.chdir(tmp_path)
  class Client:

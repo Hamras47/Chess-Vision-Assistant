@@ -14,16 +14,17 @@ from .ui.dpi_coordinates import match_monitor
 from .ai.board_recognizer import RecognitionWorker
 from .ai.openai_client import OpenAIClient,normalize_model
 from .chess.move_tracker import infer_move,infer_move_from_scores
+from .chess.coordinates import Orientation,user_color,square_to_visual
 from .core.logging_setup import configure,install_exception_hook
 
 class MainWindow(QMainWindow):
  def __init__(self):
   super().__init__(); self.settings=QSettings('ChessVisionAssistant','ChessVisionAssistant'); self.debug=self.settings.value('debug_mode',False,type=bool) or os.getenv('CHESS_VISION_DEBUG')=='1'; configure(self.debug)
-  requested_model=self.settings.value('ai_model',os.getenv('OPENAI_VISION_MODEL','gpt-5.2')); self.model=normalize_model(requested_model); self.openai_client=OpenAIClient(self.model); self.engine_path=self.find_engine(); self.board=chess.Board(); self.board_version=0; self.tracking_session_id=0; self.region=None; self.previous=None; self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.restart_times=[]; self.restart_pending=False; self._closing=False
+  requested_model=self.settings.value('ai_model',os.getenv('OPENAI_VISION_MODEL','gpt-5.2')); self.model=normalize_model(requested_model); self.openai_client=OpenAIClient(self.model); self.engine_path=self.find_engine(); self.board=chess.Board(); self.orientation=Orientation.WHITE_BOTTOM; self.user_color=chess.WHITE; self.opponent_color=chess.BLACK; self.board_version=0; self.tracking_session_id=0; self.region=None; self.previous=None; self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.restart_times=[]; self.restart_pending=False; self._closing=False
   if requested_model!=self.model:self.settings.setValue('ai_model',self.model)
   self.setWindowTitle('Chess Vision Assistant'); self.resize(850,570); self.setWindowFlag(Qt.WindowStaysOnTopHint,True)
   root=QWidget(); self.setCentralWidget(root); outer=QVBoxLayout(root); header=QHBoxLayout(); title=QLabel('Chess Vision Assistant'); title.setObjectName('title'); gear=QPushButton('⚙'); gear.setFixedWidth(42); gear.clicked.connect(self.open_settings); header.addWidget(title); header.addStretch(); header.addWidget(gear); outer.addLayout(header)
-  body=QHBoxLayout(); self.view=ChessBoardWidget(); body.addWidget(self.view,1); side=QVBoxLayout(); self.position=QLabel('POSITION\nReady'); self.best=QLabel('BEST MOVE\n—'); self.evaluation=QLabel('Evaluation —'); self.alts=QLabel(''); self.scan_button=QPushButton('SCAN BOARD'); self.scan_button.clicked.connect(self.scan_board); side.addWidget(self.position); side.addSpacing(18); side.addWidget(self.best); side.addWidget(self.evaluation); side.addWidget(self.alts); side.addStretch(); side.addWidget(self.scan_button); body.addLayout(side); outer.addLayout(body,1); self.status=QLabel('Ready'); outer.addWidget(self.status)
+  body=QHBoxLayout(); self.view=ChessBoardWidget(); body.addWidget(self.view,1); side=QVBoxLayout(); self.position=QLabel('POSITION\nReady'); self.playing=QLabel('Playing: White'); self.best=QLabel('BEST MOVE\n—'); self.evaluation=QLabel('Evaluation —'); self.alts=QLabel(''); self.scan_button=QPushButton('SCAN BOARD'); self.scan_button.clicked.connect(self.scan_board); side.addWidget(self.position); side.addWidget(self.playing); side.addSpacing(18); side.addWidget(self.best); side.addWidget(self.evaluation); side.addWidget(self.alts); side.addStretch(); side.addWidget(self.scan_button); body.addLayout(side); outer.addLayout(body,1); self.status=QLabel('Ready'); outer.addWidget(self.status)
   self.setStyleSheet("QMainWindow{background:#171a1f} QLabel{color:#e9edf1;font-size:15px;padding:5px} QLabel#title{font-size:20px;font-weight:600} QPushButton{background:#303640;color:white;padding:11px;border:1px solid #48505c;border-radius:6px} QPushButton:hover{background:#3a424e}")
   self.view.set_board(self.board)
   if not self.engine_path: self.status.setText('Stockfish needs to be configured. Open Settings.')
@@ -69,12 +70,23 @@ class MainWindow(QMainWindow):
  def start_ai(self,crop,recovery):
   if self.ai_worker and self.ai_worker.isRunning():return
   if not self.openai_client.ready():self.user_error('OpenAI is not configured. Add the API key to .env.'); return
-  self.recovery=recovery; session=self.tracking_session_id; version=self.board_version; self.ai_worker=RecognitionWorker(crop,self.model,self.debug,self.openai_client); self.ai_worker.result.connect(lambda b,r,l:self.ai_done(session,version,b,r,l,crop)); self.ai_worker.error.connect(lambda error:self.ai_failed(session,version,error)); self.ai_worker.start()
- def ai_done(self,session,version,board,result,latency,crop):
+  self.recovery=recovery; session=self.tracking_session_id; version=self.board_version; self.ai_worker=RecognitionWorker(crop,self.model,self.debug,self.openai_client); self.ai_worker.result.connect(lambda b,r,l:self.ai_done(session,version,recovery,b,r,l,crop)); self.ai_worker.error.connect(lambda error:self.ai_failed(session,version,error)); self.ai_worker.start()
+ def ask_orientation(self):
+  dialog=QMessageBox(self); dialog.setWindowTitle('Board orientation'); dialog.setText('Which side is at the bottom?'); dialog.setWindowFlag(Qt.WindowCloseButtonHint,False); white=dialog.addButton('WHITE',QMessageBox.AcceptRole); black=dialog.addButton('BLACK',QMessageBox.RejectRole)
+  while True:
+   dialog.exec()
+   if dialog.clickedButton() is white:return Orientation.WHITE_BOTTOM
+   if dialog.clickedButton() is black:return Orientation.BLACK_BOTTOM
+ def ai_done(self,session,version,recovery,board,result,latency,crop):
   if session!=self.tracking_session_id or version!=self.board_version:return
+  if not recovery:
+   if result.orientation=='unknown':
+    self.orientation=self.ask_orientation()
+   else:self.orientation=Orientation(result.orientation)
+   self.user_color=user_color(self.orientation); self.opponent_color=not self.user_color
   if result.side_to_move=='unknown':
    answer=QMessageBox.question(self,'Side to move','Is White to move?',QMessageBox.Yes|QMessageBox.No); board.turn=answer==QMessageBox.Yes
-  self.board=board; self.board_version+=1; self.previous=crop; self.view.flipped=result.orientation=='black_bottom'; self.view.set_board(self.board); self.status.setText('Board synchronized'); self.position.setText('POSITION\n● Watching'); self.scan_button.setText('RESCAN'); self.recovery_attempts=0; self.start_tracking(); self.analyze()
+  self.board=board; self.board_version+=1; self.previous=crop; self.view.set_orientation(self.orientation); self.view.set_board(self.board); self.playing.setText('Playing: '+('White' if self.user_color else 'Black')); logging.info('Session orientation=%s user_color=%s opponent_color=%s',self.orientation.name,'white' if self.user_color else 'black','black' if self.user_color else 'white'); self.status.setText('Board synchronized'); self.position.setText('POSITION\n● Watching'); self.scan_button.setText('RESCAN'); self.recovery_attempts=0; self.start_tracking(); self.analyze()
  def ai_failed(self,session,version,technical):
   if session!=self.tracking_session_id or version!=self.board_version:return
   logging.error('AI recognition failed: %s',technical)
@@ -92,7 +104,7 @@ class MainWindow(QMainWindow):
   return ScreenCapture().grab(self.region)
  def tracking_frame(self,session,crop):
   if session!=self.tracking_session_id or self.previous is None:return
-  signals=score_squares(self.previous,crop,not self.view.flipped); numeric={sq:value['combined'] for sq,value in signals.items()}; threshold=self.threshold.value; observed={sq for sq,value in numeric.items() if value>=threshold}
+  signals=score_squares(self.previous,crop,self.orientation); numeric={sq:value['combined'] for sq,value in signals.items()}; threshold=self.threshold.value; observed={sq for sq,value in numeric.items() if value>=threshold}
   if self.baseline_frames>0 and (not numeric or max(numeric.values())<threshold):self.threshold.sample(signals); self.baseline_frames-=1; threshold=self.threshold.value
   if not observed:self.stabilizer.observe(crop,False); return
   self.status.setText('Move detected...')
@@ -102,10 +114,12 @@ class MainWindow(QMainWindow):
   if not move:
    relaxed={sq for sq,value in numeric.items() if value>=max(.025,threshold*.62)}; move,confidence,candidates=infer_move(self.board,relaxed,True)
   if not move:move,confidence,candidates=infer_move_from_scores(self.board,numeric,threshold)
-  logging.info('Stable visual change session=%d version=%d threshold=%.4f squares=%s scores=%s fen=%s candidates=%s accepted=%s confidence=%.3f',session,self.board_version,threshold,[chess.square_name(s) for s in observed],{chess.square_name(s):round(v,4) for s,v in numeric.items() if v>=threshold*.45},self.board.fen(),[(m.uci(),round(score,3)) for score,m,_ in candidates],move.uci() if move else None,confidence)
+  visual_mapping={f'r{square_to_visual(s,self.orientation)[0]}c{square_to_visual(s,self.orientation)[1]}':chess.square_name(s) for s in observed}
+  logging.info('Stable visual change session=%d version=%d orientation=%s threshold=%.4f visual_to_canonical=%s scores=%s fen=%s candidates=%s accepted=%s confidence=%.3f',session,self.board_version,self.orientation.name,threshold,visual_mapping,{chess.square_name(s):round(v,4) for s,v in numeric.items() if v>=threshold*.45},self.board.fen(),[(m.uci(),round(score,3)) for score,m,_ in candidates],move.uci() if move else None,confidence)
   if move:
    if move not in self.board.legal_moves:logging.warning('Rejected stale/illegal move=%s version=%d',move,self.board_version); return
-   san=self.board.san(move); self.board.push(move); self.board_version+=1; self.last_move=time.monotonic(); self.previous=crop; self.stabilizer.reset(); self.view.set_board(self.board); self.status.setText('Opponent: '+san); self.position.setText('POSITION\n● Watching'); self.recovery_attempts=0
+   mover=self.board.turn; san=self.board.san(move); self.board.push(move); self.board_version+=1; self.last_move=time.monotonic(); self.previous=crop; self.stabilizer.reset(); self.view.set_board(self.board); move_text=('...'+san if mover==chess.BLACK else san); self.status.setText(('Opponent: ' if mover==self.opponent_color else 'Played: ')+move_text); self.position.setText('POSITION\n'+('● Your turn' if self.board.turn==self.user_color else '● Watching')); self.recovery_attempts=0
+   logging.info('Accepted canonical move=%s render from=%s to=%s orientation=%s',move.uci(),square_to_visual(move.from_square,self.orientation),square_to_visual(move.to_square,self.orientation),self.orientation.name)
    if self.debug:Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/last_accepted_frame.png',crop)
    self.analyze()
   else:logging.warning('Change rejected: no candidate passed threshold'); self.recover(crop)
@@ -135,12 +149,15 @@ class MainWindow(QMainWindow):
   if self.engine_worker:self.engine_worker.stop()
   self.engine_worker=EngineWorker(self.engine_path,float(self.settings.value('analysis_time',.6))); self.engine_worker.result.connect(self.analysis_done); self.engine_worker.error.connect(lambda version,error:logging.error('Stockfish version=%d error=%s',version,error)); self.engine_worker.start()
  def analyze(self):
-  if not self.engine_path:return
+  if self.board.turn!=self.user_color:
+   self.view.arrow=None; self.view.update(); self.best.setText('BEST MOVE\nWaiting'); self.evaluation.setText('Evaluation —'); self.alts.setText(''); self.position.setText('POSITION\n● Watching'); self.status.setText('Waiting for opponent'); return
+  self.position.setText('POSITION\n● Your turn')
+  if not self.engine_path:self.status.setText('Your turn'); return
   if not self.engine_worker or not self.engine_worker.isRunning():self.start_engine()
-  self.status.setText('Analyzing...'); self.engine_worker.submit(self.board.fen(),self.board_version)
+  self.status.setText('Your turn — analyzing...'); self.engine_worker.submit(self.board.fen(),self.board_version)
  def analysis_done(self,version,rows):
-  if version!=self.board_version or not rows:logging.info('Discarded stale Stockfish result version=%d current=%d',version,self.board_version); return
-  san,uci,score,mate,_=rows[0]; self.best.setText(f'BEST MOVE\n{san}\n{uci[:2]} → {uci[2:4]}'); self.evaluation.setText('Evaluation '+(f'Mate {mate}' if mate is not None else f'{score/100:+.2f}')); self.alts.setText('Alternatives: '+', '.join(x[0] for x in rows[1:3])); self.view.arrow=(chess.parse_square(uci[:2]),chess.parse_square(uci[2:4])); self.view.update(); self.status.setText('Watching board')
+  if version!=self.board_version or self.board.turn!=self.user_color or not rows:logging.info('Discarded stale/inapplicable Stockfish result version=%d current=%d user_turn=%s',version,self.board_version,self.board.turn==self.user_color); return
+  san,uci,score,mate,_=rows[0]; self.best.setText(f'BEST MOVE\n{san}\n{uci[:2]} → {uci[2:4]}'); self.evaluation.setText('Evaluation '+(f'Mate {mate}' if mate is not None else f'{score/100:+.2f}')); self.alts.setText('Alternatives: '+', '.join(x[0] for x in rows[1:3])); self.view.arrow=(chess.parse_square(uci[:2]),chess.parse_square(uci[2:4])); self.view.update(); self.status.setText('Your turn')
  def open_settings(self):
   model,ok=QInputDialog.getText(self,'Settings','OpenAI model:',text=self.model)
   if ok and model.strip():self.model=normalize_model(model.strip()); self.openai_client=OpenAIClient(self.model); self.settings.setValue('ai_model',self.model)

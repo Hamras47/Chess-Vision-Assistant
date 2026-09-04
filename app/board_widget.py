@@ -4,19 +4,25 @@ from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter,QColor,QFont,QPen,QBrush,QImage,QPolygonF
 from PySide6.QtCore import Qt,Signal,QRectF,QPointF
 from PySide6.QtSvg import QSvgRenderer
+from .chess.coordinates import Orientation,visual_to_square,square_to_visual
 
 NAMES={chess.PAWN:'pawn',chess.KNIGHT:'knight',chess.BISHOP:'bishop',chess.ROOK:'rook',chess.QUEEN:'queen',chess.KING:'king'}
 class ChessBoardWidget(QWidget):
     move_made=Signal(str)
     def __init__(self):
-        super().__init__(); self.board=chess.Board(); self.flipped=False; self.arrow=None; self.selected=None; self._piece_cache={}; self.setMinimumSize(420,420)
+        super().__init__(); self.board=chess.Board(); self.orientation=Orientation.WHITE_BOTTOM; self.arrow=None; self.selected=None; self._piece_cache={}; self.setMinimumSize(420,420)
     def set_board(self,board):self.board=board; self.update()
+    def set_orientation(self,orientation):self.orientation=Orientation(orientation); self.update()
+    @property
+    def flipped(self):return self.orientation is Orientation.BLACK_BOTTOM
+    @flipped.setter
+    def flipped(self,value):self.set_orientation(Orientation.BLACK_BOTTOM if value else Orientation.WHITE_BOTTOM)
     def piece_map(self):return self.board.piece_map()
     def _layout(self):
         side=min(self.width(),self.height()); square=side/8; return (self.width()-side)/2,(self.height()-side)/2,square
-    def _visual_square(self,row,col):return chess.square(7-col if self.flipped else col,row if self.flipped else 7-row)
+    def _visual_square(self,row,col):return visual_to_square(row,col,self.orientation)
     def _rect_for(self,square):
-        ox,oy,size=self._layout(); file=chess.square_file(square); rank=chess.square_rank(square); col=7-file if self.flipped else file; row=rank if self.flipped else 7-rank; return QRectF(ox+col*size,oy+row*size,size,size)
+        ox,oy,size=self._layout(); row,col=square_to_visual(square,self.orientation); return QRectF(ox+col*size,oy+row*size,size,size)
     def _piece_image(self,piece,pixels,dpr):
         key=(piece.symbol(),pixels,round(dpr,2))
         if key in self._piece_cache:return self._piece_cache[key]
