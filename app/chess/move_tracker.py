@@ -1,4 +1,14 @@
 import chess
+
+def reconcile_reconstruction(board,reconstructed):
+    """Preserve move history when a recovered position is the current or next legal state."""
+    if board.piece_map()==reconstructed.piece_map():return board,None
+    matches=[]
+    for move in board.legal_moves:
+        candidate=board.copy(); candidate.push(move)
+        if candidate.piece_map()==reconstructed.piece_map():matches.append((candidate,move))
+    return matches[0] if len(matches)==1 else (None,None)
+
 def expected_changed_squares(board,move):
     changed={move.from_square,move.to_square}
     if board.is_castling(move):

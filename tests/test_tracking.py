@@ -1,6 +1,23 @@
 import chess,pytest
 from app.chess.coordinates import Orientation,mapping_table,square_to_visual,square_to_visual_index,visual_index_to_square,visual_to_square
-from app.chess.move_tracker import infer_move,expected_changed_squares,infer_move_from_scores
+from app.chess.move_tracker import infer_move,expected_changed_squares,infer_move_from_scores,reconcile_reconstruction
+from app.chess.session import TrackingSession
+
+@pytest.mark.parametrize('color,orientation',[(chess.WHITE,Orientation.WHITE_BOTTOM),(chess.BLACK,Orientation.BLACK_BOTTOM)])
+def test_player_color_controls_only_app_display_orientation(color,orientation):
+ session=TrackingSession(); session.browser_orientation=Orientation.BLACK_BOTTOM if color==chess.WHITE else Orientation.WHITE_BOTTOM; session.select_player(color)
+ assert session.player_color==color and session.app_display_orientation is orientation
+ session.board.turn=not color
+ assert session.board.turn!=session.player_color
+
+def test_reconstruction_reconciliation_preserves_legal_turn_sequence():
+ board=chess.Board(); reconstructed=board.copy(); reconstructed.push_uci('e2e4')
+ recovered,move=reconcile_reconstruction(board,reconstructed)
+ assert move.uci()=='e2e4' and recovered.turn==chess.BLACK and recovered.move_stack[-1]==move
+
+def test_reconstruction_reconciliation_rejects_non_single_move_jump():
+ board=chess.Board(); reconstructed=board.copy(); reconstructed.push_uci('e2e4'); reconstructed.push_uci('e7e5')
+ assert reconcile_reconstruction(board,reconstructed)==(None,None)
 
 @pytest.mark.parametrize('orientation',[Orientation.WHITE_BOTTOM,Orientation.BLACK_BOTTOM])
 def test_orientation_round_trips_all_64_squares(orientation):

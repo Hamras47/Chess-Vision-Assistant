@@ -27,6 +27,4 @@ def visual_index_to_square(index:int,orientation:Orientation)->chess.Square:
 def square_to_visual_index(square:chess.Square,orientation:Orientation)->int:
     row,col=square_to_visual(square,orientation); return row*8+col
 
-def user_color(orientation:Orientation)->chess.Color:return chess.WHITE if as_orientation(orientation) is Orientation.WHITE_BOTTOM else chess.BLACK
-
 def mapping_table(orientation:Orientation):return [[chess.square_name(visual_to_square(row,col,orientation)) for col in range(8)] for row in range(8)]

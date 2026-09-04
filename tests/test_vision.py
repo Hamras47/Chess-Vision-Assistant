@@ -1,7 +1,7 @@
 import numpy as np, pytest
 from app.vision.grid import split,board_crop
 from app.vision.stabilizer import Stabilizer
-from app.vision.change_detector import square_difference,AdaptiveThreshold
+from app.vision.change_detector import square_difference,square_signals,AdaptiveThreshold
 from app.ui.dpi_coordinates import MonitorCoordinates
 from PySide6.QtCore import QRect
 
@@ -15,6 +15,16 @@ def test_changed_square_image_difference():
 def test_stabilizer_needs_a_change_then_stable_frame():
     s=Stabilizer(delay_ms=0); a=np.zeros((8,8,3),dtype=np.uint8)
     assert not s.observe(a,True); assert not s.observe(a,True); assert s.observe(a,True)
+def test_stabilizer_uses_explicit_animation_states():
+    s=Stabilizer(delay_ms=0,required_frames=2); a=np.zeros((8,8,3),dtype=np.uint8); b=np.full_like(a,20)
+    assert s.state=='STABLE'; assert not s.observe(a,True) and s.state=='CHANGE_DETECTED'
+    assert not s.observe(b,True) and s.state=='ANIMATING'
+    assert not s.observe(b,True) and s.state=='STABILIZING'
+    assert s.observe(b,True) and s.state=='NEW_STABLE_POSITION'
+def test_square_signal_exposes_all_piece_sensitive_metrics():
+    a=np.zeros((64,64,3),dtype=np.uint8); b=a.copy(); b[12:52,12:52]=255; signals=square_signals(a,b)
+    assert {'grayscale','center','edge','silhouette','normalized','combined'}<=signals.keys()
+    assert signals['center']>signals['grayscale']
 def test_highlight_only_flat_color_change_is_ignored():
     a=np.full((64,64,3),(120,160,190),dtype=np.uint8); b=np.full((64,64,3),(80,180,210),dtype=np.uint8)
     assert square_difference(a,b)<.01
