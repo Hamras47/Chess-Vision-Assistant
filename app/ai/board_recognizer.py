@@ -33,11 +33,11 @@ def recognize_image(image,model,debug=False,client=None):
 
 class RecognitionWorker(QThread):
     result=Signal(object,object,float); error=Signal(str)
-    def __init__(self,image,model,debug=False): super().__init__(); self.image=image; self.model=model; self.debug=debug
+    def __init__(self,image,model,debug=False,client=None): super().__init__(); self.image=image; self.model=model; self.debug=debug; self.client=client
     def run(self):
         last=None
         for attempt in range(1,3):
             try:
-                logging.info('Recognition attempt=%d/2',attempt); board,result,latency,_=recognize_image(self.image,self.model,self.debug); self.result.emit(board,result,latency); return
+                logging.info('Recognition attempt=%d/2',attempt); board,result,latency,_=recognize_image(self.image,self.model,self.debug,self.client); self.result.emit(board,result,latency); return
             except Exception as e: last=e; logging.exception('Recognition attempt=%d failed stage=%s reason=%s',attempt,getattr(e,'stage','unknown'),getattr(e,'reason',e))
         self.error.emit(str(last))

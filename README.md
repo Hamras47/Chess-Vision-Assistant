@@ -30,11 +30,15 @@ The compact interface exposes Scan/Rescan, the synchronized board, current statu
 
 ## Architecture
 
-`app/chess/` owns reconstruction, coordinates, and legal move matching; `app/ai/` performs structured visual transcription; `app/engine.py` runs Stockfish asynchronously; `app/vision/` owns frozen-desktop capture, crop correction, edge-weighted change detection, stabilization, and the tracking worker.
+`app/chess/` owns reconstruction, coordinates, and tolerant legal-move matching; `app/ai/` performs structured visual transcription; one persistent worker in `app/engine.py` owns Stockfish and discards stale board versions; `app/vision/` owns frozen-desktop capture, crop correction, adaptive multi-signal change detection, temporal stabilization, and the resilient tracking worker. The UI thread alone replaces or pushes onto the canonical `python-chess.Board`.
+
+The internal board uses bundled Cburnett SVG pieces with high-contrast color adjustments. Rendering reads the canonical board on every paint and caches only size-specific SVG rasterizations, never occupancy.
 
 ## Roadmap / limitation
 
 A single screenshot cannot establish historical castling rights or an en-passant target. Arbitrary midgame scans therefore use conservative rights. Promotion choice may require AI recovery because all promotion moves affect the same two visual squares. Real-world recognition quality depends on the selected model and a clean board crop.
+
+Tracking thresholds are calibrated from initial unchanged frames. Stable changes are logged with per-square scores, current FEN, ranked legal candidates, acceptance confidence, and rejection reason. Capture failures are retried, and a bounded watchdog restarts a stopped tracker. Rotating runtime logs are stored in `logs/chess_vision.log`; uncaught exceptions and board/session context are stored in `logs/crash.log`.
 
 ## AI recognition diagnostics
 

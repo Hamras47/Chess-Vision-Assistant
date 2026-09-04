@@ -1,7 +1,7 @@
 import numpy as np, pytest
 from app.vision.grid import split,board_crop
 from app.vision.stabilizer import Stabilizer
-from app.vision.change_detector import square_difference
+from app.vision.change_detector import square_difference,AdaptiveThreshold
 from app.ui.dpi_coordinates import MonitorCoordinates
 from PySide6.QtCore import QRect
 
@@ -14,7 +14,7 @@ def test_changed_square_image_difference():
     assert changed==[19]
 def test_stabilizer_needs_a_change_then_stable_frame():
     s=Stabilizer(delay_ms=0); a=np.zeros((8,8,3),dtype=np.uint8)
-    assert not s.observe(a,True); assert s.observe(a,True)
+    assert not s.observe(a,True); assert not s.observe(a,True); assert s.observe(a,True)
 def test_highlight_only_flat_color_change_is_ignored():
     a=np.full((64,64,3),(120,160,190),dtype=np.uint8); b=np.full((64,64,3),(80,180,210),dtype=np.uint8)
     assert square_difference(a,b)<.01
@@ -31,3 +31,6 @@ def test_loose_selection_is_normalized_to_square_crop():
       for c in range(8): image[20+r*25:20+(r+1)*25,20+c*25:20+(c+1)*25]=210 if (r+c)%2==0 else 80
     crop,bounds=board_crop(image)
     assert crop.shape[0]==crop.shape[1] and 170<=crop.shape[0]<=220
+def test_adaptive_threshold_is_bounded():
+    threshold=AdaptiveThreshold(); threshold.sample({i:{'combined':.001} for i in range(64)}); assert threshold.value==threshold.minimum
+    threshold.sample({i:{'combined':1.0} for i in range(64)}); assert threshold.value==threshold.maximum

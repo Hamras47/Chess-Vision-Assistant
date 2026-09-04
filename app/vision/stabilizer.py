@@ -1,9 +1,13 @@
-import time, numpy as np
+import time,numpy as np
 class Stabilizer:
-    def __init__(self, delay_ms=300): self.delay=delay_ms/1000; self.pending=None; self.last=None
-    def observe(self, frame, changed):
+    def __init__(self,delay_ms=220,required_frames=2,tolerance=2.8):self.delay=delay_ms/1000; self.required=required_frames; self.tolerance=tolerance; self.reset()
+    def reset(self):self.started=None; self.latest=None; self.stable_count=0; self.state='STABLE'
+    def observe(self,frame,changed):
         now=time.monotonic()
-        if not changed: self.pending=None; self.last=frame; return False
-        if self.pending is None: self.pending=now; self.last=frame; return False
-        stable=float(np.mean(np.abs(frame.astype(float)-self.last.astype(float))))<2.5; self.last=frame
-        return stable and now-self.pending>=self.delay
+        if not changed:self.latest=frame; return False
+        if self.started is None:self.started=now; self.latest=frame; self.state='CHANGE_STARTED'; return False
+        delta=float(np.mean(np.abs(frame.astype(np.float32)-self.latest.astype(np.float32)))); self.latest=frame
+        if delta<=self.tolerance:self.stable_count+=1; self.state='STABILIZING'
+        else:self.stable_count=0; self.state='CHANGING'
+        if self.stable_count>=self.required and now-self.started>=self.delay:self.state='STABLE_NEW_POSITION'; return True
+        return False
