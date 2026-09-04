@@ -1,0 +1,8 @@
+PySide6>=6.6
+python-chess>=1.999
+numpy>=1.26
+opencv-python>=4.9
+mss>=9.0
+pytest>=8.0
+openai>=1.0
+python-dotenv>=1.0

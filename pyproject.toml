@@ -1,0 +1,6 @@
+[project]
+name = "chess-vision-assistant"
+version = "0.1.0"
+dependencies = ["PySide6>=6.6", "python-chess>=1.999", "numpy>=1.26", "opencv-python>=4.9", "mss>=9.0"]
+[tool.pytest.ini_options]
+pythonpath = ["."]
