@@ -6,14 +6,14 @@ from .board_widget import ChessBoardWidget
 from .engine import EngineWorker
 from .vision.capture import ScreenCapture
 from .vision.grid import board_crop
-from .vision.change_detector import score_squares,AdaptiveThreshold
+from .vision.change_detector import score_squares,AdaptiveThreshold,frame_signature,signature_difference
 from .vision.stabilizer import Stabilizer
 from .vision.tracking_worker import TrackingWorker
 from .ui.region_selector import RegionSelector
 from .ui.dpi_coordinates import match_monitor
 from .ai.board_recognizer import RecognitionWorker
 from .ai.openai_client import OpenAIClient,normalize_model
-from .chess.move_tracker import infer_move,infer_move_from_scores,reconcile_reconstruction
+from .chess.move_tracker import infer_move,infer_move_from_scores,infer_legal_sequence,visual_plausibility,reconcile_reconstruction
 from .chess.coordinates import Orientation,square_to_visual
 from .chess.session import TrackingSession
 from .core.logging_setup import configure,install_exception_hook
@@ -21,7 +21,7 @@ from .core.logging_setup import configure,install_exception_hook
 class MainWindow(QMainWindow):
  def __init__(self):
   super().__init__(); self.settings=QSettings('ChessVisionAssistant','ChessVisionAssistant'); self.debug=self.settings.value('debug_mode',False,type=bool) or os.getenv('CHESS_VISION_DEBUG')=='1'; configure(self.debug)
-  requested_model=self.settings.value('ai_model',os.getenv('OPENAI_VISION_MODEL','gpt-5.2')); self.model=normalize_model(requested_model); self.openai_client=OpenAIClient(self.model); self.engine_path=self.find_engine(); self.session=TrackingSession(); self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.restart_times=[]; self.restart_pending=False; self._closing=False
+  requested_model=self.settings.value('ai_model',os.getenv('OPENAI_VISION_MODEL','gpt-5.2')); self.model=normalize_model(requested_model); self.openai_client=OpenAIClient(self.model); self.engine_path=self.find_engine(); self.session=TrackingSession(); self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.last_local_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.last_consistency=0.; self.last_strong_consistency=0.; self.consistency_interval=1.5; self.strong_consistency_interval=5.; self.pending_move=None; self.restart_times=[]; self.restart_pending=False; self._closing=False
   if requested_model!=self.model:self.settings.setValue('ai_model',self.model)
   self.setWindowTitle('Chess Vision Assistant'); self.resize(850,570); self.setWindowFlag(Qt.WindowStaysOnTopHint,True)
   root=QWidget(); self.setCentralWidget(root); outer=QVBoxLayout(root); header=QHBoxLayout(); title=QLabel('Chess Vision Assistant'); title.setObjectName('title'); gear=QPushButton('⚙'); gear.setFixedWidth(42); gear.clicked.connect(self.open_settings); header.addWidget(title); header.addStretch(); header.addWidget(gear); outer.addLayout(header)
@@ -31,7 +31,7 @@ class MainWindow(QMainWindow):
   if not self.engine_path: self.status.setText('Stockfish needs to be configured. Open Settings.')
   self.engine_worker=None
   if self.engine_path:self.start_engine()
-  self.watchdog=QTimer(self); self.watchdog.setInterval(2000); self.watchdog.timeout.connect(self.check_watchdog); self.watchdog.start(); install_exception_hook(self.crash_context)
+  self.watchdog=QTimer(self); self.watchdog.setInterval(1000); self.watchdog.timeout.connect(self.check_watchdog); self.watchdog.start(); install_exception_hook(self.crash_context)
  @property
  def board(self):return self.session.board
  @board.setter
@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
    if '.venv' not in p.parts:return str(p.resolve())
   return ''
  def scan_board(self):
-  self.tracking_session_id+=1; self.board_version+=1; self.session.player_color=None; self.session.browser_orientation=None; self.session.last_accepted_frame=None; self.session.latest_frame=None
+  self.tracking_session_id+=1; self.board_version+=1; self.session.player_color=None; self.session.browser_orientation=None; self.session.last_accepted_frame=None; self.session.latest_frame=None; self.session.last_capture_signature=None; self.session.last_accepted_signature=None; self.session.frame_sequence=0; self.session.tracking_state='WATCHING'; self.pending_move=None; self.last_local_recovery=0.
   if self.tracker:self.stop_tracking()
   self.hide(); QTimer.singleShot(180,self.begin_snip)
  def begin_snip(self):
@@ -94,8 +94,12 @@ class MainWindow(QMainWindow):
   except Exception: logging.exception('board crop failed'); self.show(); self.user_error('Could not capture the selected board.')
  def start_ai(self,crop,recovery):
   if self.ai_worker and self.ai_worker.isRunning():return
-  if not self.openai_client.ready():self.user_error('OpenAI is not configured. Add the API key to .env.'); return
-  self.recovery=recovery; session=self.tracking_session_id; version=self.board_version; self.ai_worker=RecognitionWorker(crop,self.model,self.debug,self.openai_client); self.ai_worker.result.connect(lambda b,r,l:self.ai_done(session,version,recovery,b,r,l,crop)); self.ai_worker.error.connect(lambda error:self.ai_failed(session,version,error)); self.ai_worker.start()
+  if not self.openai_client.ready():
+   if recovery:self.recovery=True; self.ai_failed(self.tracking_session_id,self.board_version,'OpenAI is not configured'); return
+   self.user_error('OpenAI is not configured. Add the API key to .env.'); return
+  self.recovery=recovery
+  if recovery:self.session.tracking_state='RECOVER_AI'; self.session.ai_recoveries+=1; self.status.setText('● Resynchronizing')
+  session=self.tracking_session_id; version=self.board_version; self.ai_worker=RecognitionWorker(crop,self.model,self.debug,self.openai_client); self.ai_worker.result.connect(lambda b,r,l:self.ai_done(session,version,recovery,b,r,l,crop)); self.ai_worker.error.connect(lambda error:self.ai_failed(session,version,error)); self.ai_worker.start()
  def ask_color(self,title,text,white_label='WHITE',black_label='BLACK'):
   dialog=QMessageBox(self); dialog.setWindowTitle(title); dialog.setText(text); dialog.setWindowFlag(Qt.WindowCloseButtonHint,False); white=dialog.addButton(white_label,QMessageBox.AcceptRole); black=dialog.addButton(black_label,QMessageBox.RejectRole)
   while True:
@@ -111,6 +115,7 @@ class MainWindow(QMainWindow):
   self.session.select_player(color); self.view.set_orientation(self.session.app_display_orientation); self.playing.setText('Playing: '+('White' if color else 'Black'))
  def ai_done(self,session,version,recovery,board,result,latency,crop):
   if session!=self.tracking_session_id or version!=self.board_version:return
+  if recovery and not board.is_valid():logging.error('Discarded invalid staged AI recovery board fen=%s',board.fen()); self.ai_failed(session,version,'invalid reconstructed board'); return
   if not recovery:
    self.session.browser_orientation=self.ask_browser_orientation() if result.orientation=='unknown' else Orientation(result.orientation)
    self.select_player(self.ask_player_color())
@@ -122,51 +127,89 @@ class MainWindow(QMainWindow):
     if recovered_move:logging.info('AI recovery reconciled exactly one legal move=%s',recovered_move.uci())
    else:
     board.turn=self.ask_side_to_move(); logging.warning('AI recovery replaced history; side to move confirmed explicitly')
-  self.board=board; self.board_version+=1; self.previous=crop; self.view.set_orientation(self.session.app_display_orientation); self.view.set_board(self.board); logging.info('Session browser_orientation=%s app_display_orientation=%s player_color=%s board_turn=%s',self.session.browser_orientation.name,self.session.app_display_orientation.name,'white' if self.player_color else 'black','white' if self.board.turn else 'black'); self.status.setText('Board synchronized'); self.position.setText('POSITION\n● Watching'); self.scan_button.setText('RESCAN'); self.recovery_attempts=0; self.start_tracking(); self.analyze()
+  self.board=board; self.board_version+=1; self.previous=crop; self.session.last_accepted_signature=frame_signature(crop); self.session.last_capture_signature=self.session.last_accepted_signature; self.session.tracking_state='WATCHING'; self.pending_move=None; self.view.set_orientation(self.session.app_display_orientation); self.view.set_board(self.board); logging.info('Session browser_orientation=%s app_display_orientation=%s player_color=%s board_turn=%s',self.session.browser_orientation.name,self.session.app_display_orientation.name,'white' if self.player_color else 'black','white' if self.board.turn else 'black'); self.status.setText('● Watching'); self.position.setText('POSITION\n● Watching'); self.scan_button.setText('RESCAN'); self.recovery_attempts=0; self.start_tracking(); self.analyze()
  def ai_failed(self,session,version,technical):
   if session!=self.tracking_session_id or version!=self.board_version:return
   logging.error('AI recognition failed: %s',technical)
-  if self.recovery and self.recovery_attempts<2:
-   self.recovery_attempts+=1; QTimer.singleShot(400,self.retry_recovery); return
+  if self.recovery:
+   self.session.failed_ai_recoveries+=1; self.session.tracking_state='WATCHING'; self.pending_move=None; self.stabilizer.reset(); logging.warning('Background AI recovery failed; canonical board retained version=%d failures=%d',self.board_version,self.session.failed_ai_recoveries)
+   if self.recovery_attempts>=2:self.tracking_lost()
+   else:self.status.setText('● Checking position')
+   return
   self.stop_tracking(); self.position.setText('POSITION\nTracking lost'); self.user_error('Could not recognize board.')
  def start_tracking(self):
-  self.stop_tracking(); session=self.tracking_session_id; self.threshold=AdaptiveThreshold(); self.baseline_frames=6; self.stabilizer=Stabilizer(); self.last_capture=time.monotonic(); self.tracker=TrackingWorker(self.region,int(self.settings.value('tracking_interval',300))); self.tracker.frame.connect(lambda crop:self.tracking_frame(session,crop)); self.tracker.heartbeat.connect(lambda stamp:self.tracker_heartbeat(session,stamp)); self.tracker.failed.connect(lambda error:self.tracker_failed(session,error)); self.tracker.start()
+  self.stop_tracking(); session=self.tracking_session_id; self.threshold=AdaptiveThreshold(); self.baseline_frames=6; self.stabilizer=Stabilizer(delay_ms=100,required_frames=2); self.last_capture=time.monotonic(); self.last_consistency=self.last_capture; self.last_strong_consistency=self.last_capture; self.consistency_interval=max(.5,min(5.,int(self.settings.value('consistency_interval',1500))/1000)); self.strong_consistency_interval=max(2.,min(15.,int(self.settings.value('strong_consistency_interval',5000))/1000)); interval=max(75,min(500,int(self.settings.value('tracking_interval',125)))); self.tracker=TrackingWorker(self.region,interval); self.tracker.frame.connect(lambda crop:self.tracking_frame(session,crop)); self.tracker.heartbeat.connect(lambda stamp:self.tracker_heartbeat(session,stamp)); self.tracker.metrics.connect(lambda fps,average,count:self.tracker_metrics(session,fps,average,count)); self.tracker.failed.connect(lambda error:self.tracker_failed(session,error)); self.tracker.start()
  def stop_tracking(self):
   if self.tracker:self.tracker.stop(); self.tracker=None
  def retry_recovery(self):
   try:self.start_ai(self.current_frame(),True)
-  except Exception:logging.exception('AI recovery capture failed'); self.tracking_lost()
+  except Exception:logging.exception('AI recovery capture failed'); self.session.tracking_state='WATCHING'; self.status.setText('● Checking position')
  def current_frame(self):
   return ScreenCapture().grab(self.region)
  def tracking_frame(self,session,crop):
   if session!=self.tracking_session_id or self.previous is None:return
-  self.session.latest_frame=crop; signals=score_squares(self.previous,crop,self.session.browser_orientation); numeric={sq:value['combined'] for sq,value in signals.items()}; threshold=self.threshold.value; observed={sq for sq,value in numeric.items() if value>=threshold}
+  now=time.monotonic(); self.session.frame_sequence+=1; self.session.latest_frame=crop; signature=frame_signature(crop); self.session.last_capture_signature=signature
+  if self.session.last_accepted_signature is None:self.session.last_accepted_signature=frame_signature(self.previous)
+  consistency=signature_difference(self.session.last_accepted_signature,signature); periodic=now-self.last_consistency>=self.consistency_interval; strong=now-self.last_strong_consistency>=self.strong_consistency_interval
+  if periodic:self.last_consistency=now; logging.info('Periodic consistency score=%.4f version=%d state=%s frame=%d',consistency,self.board_version,self.session.tracking_state,self.session.frame_sequence)
+  if strong:self.last_strong_consistency=now
+  if self.session.tracking_state in ('RECOVER_AI','TRACKING_LOST'):return
+  if self.session.failed_ai_recoveries and now-self.last_recovery<self.consistency_interval:return
+  if consistency<.010 and not strong:
+   self.stabilizer.observe(crop,False); self.session.tracking_state='WATCHING'; self.pending_move=None; return
+  if self.session.tracking_state=='WATCHING':self.session.tracking_state='CHANGE_DETECTED'
+  signals=score_squares(self.previous,crop,self.session.browser_orientation); numeric={sq:value['combined'] for sq,value in signals.items()}; threshold=self.threshold.value; observed={sq for sq,value in numeric.items() if value>=threshold}
   if self.baseline_frames>0 and (not numeric or max(numeric.values())<threshold):self.threshold.sample(signals); self.baseline_frames-=1; threshold=self.threshold.value
-  if not observed:self.stabilizer.observe(crop,False); return
-  self.status.setText('Move detected...')
+  if strong:logging.info('Strong local consistency score=%.4f changed=%s',consistency,[chess.square_name(s) for s in observed])
+  if not observed:self.stabilizer.observe(crop,False); self.session.tracking_state='WATCHING'; self.pending_move=None; return
+  self.session.tracking_state='STABILIZING'; self.status.setText('● Checking position')
   if not self.stabilizer.observe(crop,True):return
+  self.session.tracking_state='INFER_MOVE'
   if self.debug:Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/current_stable_frame.png',crop)
-  self.last_stable=time.monotonic(); move,confidence,candidates=infer_move(self.board,observed)
+  self.last_stable=now; move,confidence,candidates=infer_move(self.board,observed); matched=observed
   if not move:
-   relaxed={sq for sq,value in numeric.items() if value>=max(.025,threshold*.62)}; move,confidence,candidates=infer_move(self.board,relaxed,True)
+   matched={sq for sq,value in numeric.items() if value>=max(.025,threshold*.62)}; move,confidence,candidates=infer_move(self.board,matched,True)
   if not move:move,confidence,candidates=infer_move_from_scores(self.board,numeric,threshold)
   visual_mapping={f'r{square_to_visual(s,self.session.browser_orientation)[0]}c{square_to_visual(s,self.session.browser_orientation)[1]}':chess.square_name(s) for s in observed}
   logging.info('Stable visual change session=%d version=%d browser_orientation=%s state=%s threshold=%.4f visual_to_canonical=%s scores=%s fen=%s candidates=%s accepted=%s confidence=%.3f',session,self.board_version,self.session.browser_orientation.name,self.stabilizer.state,threshold,visual_mapping,{chess.square_name(s):round(v,4) for s,v in numeric.items() if v>=threshold*.45},self.board.fen(),[(m.uci(),round(score,3)) for score,m,_ in candidates],move.uci() if move else None,confidence)
   if move:
-   if move not in self.board.legal_moves:logging.warning('Rejected stale/illegal move=%s version=%d',move,self.board_version); return
-   mover=self.board.turn; san=self.board.san(move); self.board.push(move); self.board_version+=1; self.last_move=time.monotonic(); self.previous=crop; self.stabilizer.reset(); self.view.set_board(self.board); move_text=('...'+san if mover==chess.BLACK else san); self.status.setText(('Opponent: ' if mover==self.opponent_color else 'Played: ')+move_text); self.position.setText('POSITION\n'+('● Your turn' if self.board.turn==self.player_color else '● Watching')); self.recovery_attempts=0
-   logging.info('Accepted canonical move=%s browser cells from=%s to=%s render cells from=%s to=%s',move.uci(),square_to_visual(move.from_square,self.session.browser_orientation),square_to_visual(move.to_square,self.session.browser_orientation),square_to_visual(move.from_square,self.session.app_display_orientation),square_to_visual(move.to_square,self.session.app_display_orientation))
-   if self.debug:Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/last_accepted_frame.png',crop)
-   self.analyze()
-  else:logging.warning('Change rejected: no candidate passed threshold'); self.recover(crop)
+   plausibility=visual_plausibility(self.board,move,matched,numeric,threshold); self.session.tracking_state='VERIFY_MOVE'; key=(self.board_version,move.uci())
+   if confidence>=.90 and plausibility>=.82:self.accept_sequence((move,),crop,signature,'normal',confidence)
+   elif confidence>=.70 and plausibility>=.72:
+    if self.pending_move==key:self.accept_sequence((move,),crop,signature,'confirmed',confidence)
+    else:self.pending_move=key; logging.info('Medium-confidence candidate held for another stable frame move=%s confidence=%.3f plausibility=%.3f',move.uci(),confidence,plausibility)
+   else:self.pending_move=None; self.try_local_recovery(crop,signature,observed,numeric,threshold)
+  else:self.pending_move=None; self.try_local_recovery(crop,signature,observed,numeric,threshold)
+ def accept_sequence(self,moves,crop,signature,source,confidence):
+  notation=[]
+  for move in moves:
+   if move not in self.board.legal_moves:logging.warning('Rejected stale/illegal recovery move=%s version=%d',move,self.board_version); return False
+   mover=self.board.turn; san=self.board.san(move); self.board.push(move); self.board_version+=1; notation.append(('...'+san if mover==chess.BLACK else san,mover))
+  self.last_move=time.monotonic(); self.previous=crop; self.session.last_accepted_signature=signature; self.session.last_capture_signature=signature; self.session.failed_ai_recoveries=0; self.session.tracking_state='WATCHING'; self.pending_move=None; self.stabilizer.reset(); self.view.set_board(self.board); self.recovery_attempts=0
+  last_text,last_mover=notation[-1]; self.status.setText(('Opponent: ' if last_mover==self.opponent_color else 'Played: ')+last_text); self.position.setText('POSITION\n'+('● Your turn' if self.board.turn==self.player_color else '● Watching')); logging.info('Accepted sequence=%s source=%s confidence=%.3f version=%d',','.join(move.uci() for move in moves),source,confidence,self.board_version)
+  assert self.view.piece_map()==self.board.piece_map()
+  if self.debug:Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/last_accepted_frame.png',crop)
+  self.analyze(); return True
+ def try_local_recovery(self,crop,signature,observed,numeric,threshold):
+  now=time.monotonic()
+  if now-self.last_local_recovery<self.consistency_interval:self.session.tracking_state='WATCHING'; self.stabilizer.reset(); return
+  self.last_local_recovery=now
+  self.session.tracking_state='RECOVER_LOCAL'; sequence,confidence,candidates=infer_legal_sequence(self.board,observed,numeric,threshold,2); logging.info('Local recovery candidates=%s confidence=%.3f',[(','.join(m.uci() for m in moves),round(score,3)) for score,moves,_ in candidates],confidence)
+  if sequence:
+   self.session.local_recoveries+=1
+   if len(sequence)==2:self.session.two_ply_recoveries+=1
+   self.accept_sequence(sequence,crop,signature,'local-2ply' if len(sequence)==2 else 'local-1ply',confidence); return
+  logging.warning('Local recovery failed; escalating to AI fallback'); self.recover(crop)
  def recover(self,crop):
   now=time.monotonic()
-  if now-self.last_recovery<5:return
+  if now-self.last_recovery<5:self.session.tracking_state='WATCHING'; self.stabilizer.reset(); return
   if self.recovery_attempts>=2:self.tracking_lost(); return
-  self.last_recovery=now; self.recovery_attempts+=1; self.status.setText('Resynchronizing...'); self.start_ai(crop,True)
- def tracking_lost(self): self.stop_tracking(); self.position.setText('POSITION\nTracking lost'); self.status.setText('Tracking lost'); self.scan_button.setText('RESCAN')
+  self.last_recovery=now; self.recovery_attempts+=1; self.start_ai(crop,True)
+ def tracking_lost(self): self.session.tracking_state='TRACKING_LOST'; self.stop_tracking(); self.position.setText('POSITION\n● Tracking lost'); self.status.setText('● Tracking lost'); self.scan_button.setText('RESCAN')
  def tracker_heartbeat(self,session,stamp):
   if session==self.tracking_session_id:self.last_capture=stamp
+ def tracker_metrics(self,session,fps,average,count):
+  if session==self.tracking_session_id:logging.info('Tracker metrics capture_fps=%.2f average_capture_ms=%.2f samples=%d stable_age=%.2f board_version=%d state=%s local_recoveries=%d two_ply_recoveries=%d ai_recoveries=%d failed_ai_recoveries=%d',fps,average,count,time.monotonic()-self.last_stable if self.last_stable else -1,self.board_version,self.session.tracking_state,self.session.local_recoveries,self.session.two_ply_recoveries,self.session.ai_recoveries,self.session.failed_ai_recoveries)
  def tracker_failed(self,session,error):
   if session!=self.tracking_session_id:return
   logging.error('Tracking worker failed session=%d error=%s',session,error); self.schedule_tracker_restart()
@@ -180,7 +223,7 @@ class MainWindow(QMainWindow):
   if self.region and not self._closing:self.start_tracking()
  def check_watchdog(self):
   if self._closing or not self.region or not self.tracker:return
-  if not self.tracker.isRunning() or time.monotonic()-self.last_capture>4:self.schedule_tracker_restart()
+  if not self.tracker.isRunning() or time.monotonic()-self.last_capture>2:self.schedule_tracker_restart()
  def start_engine(self):
   if self.engine_worker:self.engine_worker.stop()
   self.engine_worker=EngineWorker(self.engine_path,float(self.settings.value('analysis_time',.6))); self.engine_worker.result.connect(self.analysis_done); self.engine_worker.error.connect(lambda version,error:logging.error('Stockfish version=%d error=%s',version,error)); self.engine_worker.start()
@@ -198,11 +241,13 @@ class MainWindow(QMainWindow):
  def open_settings(self):
   model,ok=QInputDialog.getText(self,'Settings','OpenAI model:',text=self.model)
   if ok and model.strip():self.model=normalize_model(model.strip()); self.openai_client=OpenAIClient(self.model); self.settings.setValue('ai_model',self.model)
+  interval,ok=QInputDialog.getInt(self,'Advanced tracking','Fast capture interval (ms):',int(self.settings.value('tracking_interval',125)),75,500,25)
+  if ok:self.settings.setValue('tracking_interval',interval)
   if not self.engine_path and QMessageBox.question(self,'Settings','Locate Stockfish now?')==QMessageBox.Yes:
    p=QFileDialog.getOpenFileName(self,'Locate Stockfish','','Executable (*.exe)')[0]
    if p:self.engine_path=p; self.settings.setValue('stockfish',p); self.start_engine()
  def user_error(self,text): self.status.setText(text); QMessageBox.warning(self,'Chess Vision Assistant',text)
- def crash_context(self):return {'fen':self.board.fen(),'tracking':bool(self.tracker and self.tracker.isRunning()),'region':self.region,'board_version':self.board_version,'session':self.tracking_session_id}
+ def crash_context(self):return {'fen':self.board.fen(),'tracking':bool(self.tracker and self.tracker.isRunning()),'tracking_state':self.session.tracking_state,'frame_sequence':self.session.frame_sequence,'region':self.region,'board_version':self.board_version,'session':self.tracking_session_id}
  def closeEvent(self,event):
   if self.ai_worker and self.ai_worker.isRunning() and not self._closing:
    self._closing=True; self.tracking_session_id+=1; self.stop_tracking(); self.status.setText('Finishing current scan before closing...'); self.ai_worker.finished.connect(self.close); event.ignore(); return

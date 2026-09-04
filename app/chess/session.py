@@ -16,6 +16,14 @@ class TrackingSession:
     board_region: dict[str,int]|None=None
     last_accepted_frame: Any=None
     latest_frame: Any=None
+    last_capture_signature: Any=None
+    last_accepted_signature: Any=None
+    frame_sequence: int=0
+    tracking_state: str='WATCHING'
+    local_recoveries: int=0
+    two_ply_recoveries: int=0
+    ai_recoveries: int=0
+    failed_ai_recoveries: int=0
 
     @property
     def opponent_color(self):
@@ -24,4 +32,3 @@ class TrackingSession:
     def select_player(self,color:chess.Color):
         self.player_color=color
         self.app_display_orientation=Orientation.WHITE_BOTTOM if color==chess.WHITE else Orientation.BLACK_BOTTOM
-

@@ -1,7 +1,7 @@
 import numpy as np, pytest
 from app.vision.grid import split,board_crop
 from app.vision.stabilizer import Stabilizer
-from app.vision.change_detector import square_difference,square_signals,AdaptiveThreshold
+from app.vision.change_detector import square_difference,square_signals,frame_signature,signature_difference,AdaptiveThreshold
 from app.ui.dpi_coordinates import MonitorCoordinates
 from PySide6.QtCore import QRect
 
@@ -25,6 +25,9 @@ def test_square_signal_exposes_all_piece_sensitive_metrics():
     a=np.zeros((64,64,3),dtype=np.uint8); b=a.copy(); b[12:52,12:52]=255; signals=square_signals(a,b)
     assert {'grayscale','center','edge','silhouette','normalized','combined'}<=signals.keys()
     assert signals['center']>signals['grayscale']
+def test_frame_signature_is_small_and_cheaply_detects_change():
+    a=np.zeros((800,800,3),dtype=np.uint8); b=a.copy(); b[200:400,200:400]=255; sa=frame_signature(a); sb=frame_signature(b)
+    assert sa.shape==(16,16) and sb.shape==(16,16) and signature_difference(sa,sa)==0 and signature_difference(sa,sb)>.01
 def test_highlight_only_flat_color_change_is_ignored():
     a=np.full((64,64,3),(120,160,190),dtype=np.uint8); b=np.full((64,64,3),(80,180,210),dtype=np.uint8)
     assert square_difference(a,b)<.01

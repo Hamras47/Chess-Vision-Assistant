@@ -1,6 +1,6 @@
 import chess,pytest
 from app.chess.coordinates import Orientation,mapping_table,square_to_visual,square_to_visual_index,visual_index_to_square,visual_to_square
-from app.chess.move_tracker import infer_move,expected_changed_squares,infer_move_from_scores,reconcile_reconstruction
+from app.chess.move_tracker import infer_move,expected_changed_squares,infer_move_from_scores,infer_legal_sequence,transition_squares,reconcile_reconstruction
 from app.chess.session import TrackingSession
 
 @pytest.mark.parametrize('color,orientation',[(chess.WHITE,Orientation.WHITE_BOTTOM),(chess.BLACK,Orientation.BLACK_BOTTOM)])
@@ -18,6 +18,11 @@ def test_reconstruction_reconciliation_preserves_legal_turn_sequence():
 def test_reconstruction_reconciliation_rejects_non_single_move_jump():
  board=chess.Board(); reconstructed=board.copy(); reconstructed.push_uci('e2e4'); reconstructed.push_uci('e7e5')
  assert reconcile_reconstruction(board,reconstructed)==(None,None)
+
+def test_bounded_two_ply_recovery_finds_fast_move_and_reply():
+ board=chess.Board(); visible=board.copy(); visible.push_uci('e2e4'); visible.push_uci('e7e5'); observed=transition_squares(board,visible); scores={square:(.10 if square in observed else 0.) for square in chess.SQUARES}
+ sequence,confidence,_=infer_legal_sequence(board,observed,scores,.065,max_depth=2)
+ assert [move.uci() for move in sequence]==['e2e4','e7e5'] and confidence>=.90
 
 @pytest.mark.parametrize('orientation',[Orientation.WHITE_BOTTOM,Orientation.BLACK_BOTTOM])
 def test_orientation_round_trips_all_64_squares(orientation):

@@ -33,3 +33,26 @@ def infer_move_from_scores(board,scores,threshold):
     if candidates[0][1].promotion and len(candidates)>1 and candidates[0][2]==candidates[1][2]:return None,candidates[0][0],candidates[:8]
     if candidates[0][0]>=.62 and (len(candidates)==1 or candidates[0][0]-candidates[1][0]>=.07):return candidates[0][1],candidates[0][0],candidates[:8]
     return None,candidates[0][0],candidates[:8]
+
+def visual_plausibility(board,move,observed,scores,threshold):
+    expected=expected_changed_squares(board,move); coverage=len(expected&observed)/len(expected)
+    strength=sum(min(1.,scores.get(square,0.)/max(threshold,.001)) for square in expected)/len(expected)
+    return .65*coverage+.35*strength
+
+def transition_squares(before,after):
+    a,b=before.piece_map(),after.piece_map(); return {square for square in chess.SQUARES if a.get(square)!=b.get(square)}
+
+def infer_legal_sequence(board,observed,scores,threshold,max_depth=2):
+    candidates=[]
+    def add(sequence,position):
+        expected=transition_squares(board,position); missing=len(expected-observed); extra=len(observed-expected); coverage=len(expected&observed)/max(1,len(expected)); strength=sum(min(1.,scores.get(square,0.)/max(threshold,.001)) for square in expected)/max(1,len(expected)); score=.62*coverage+.38*strength-.32*missing-.035*extra
+        candidates.append((max(0.,score),tuple(sequence),expected))
+    for first in board.legal_moves:
+        after_first=board.copy(); after_first.push(first); add([first],after_first)
+        if max_depth>=2:
+            for reply in after_first.legal_moves:
+                after_reply=after_first.copy(); after_reply.push(reply); add([first,reply],after_reply)
+    candidates.sort(key=lambda item:item[0],reverse=True)
+    if not candidates:return None,0.,[]
+    best=candidates[0]; margin=best[0]-(candidates[1][0] if len(candidates)>1 else 0.)
+    return (best[1] if best[0]>=.82 and margin>=.065 else None),best[0],candidates[:8]
