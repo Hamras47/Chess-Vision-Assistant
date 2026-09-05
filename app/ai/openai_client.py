@@ -24,12 +24,12 @@ class OpenAIClient:
   return self._client
  def recognize(self,png,schema,prompt):
   started=time.monotonic(); data='data:image/png;base64,'+base64.b64encode(png).decode()
-  logging.info('AI request start model=%s png_bytes=%d',self.model,len(png))
+  logging.info('OPENAI_REQUEST_STARTED model=%s png_bytes=%d',self.model,len(png))
   try:
    r=self.client().responses.create(model=self.model,store=False,input=[{'role':'system','content':prompt},{'role':'user','content':[{'type':'input_text','text':'Transcribe this board.'},{'type':'input_image','image_url':data,'detail':'high'}]}],text={'format':{'type':'json_schema','name':'board_recognition','strict':True,'schema':schema}})
-   latency=time.monotonic()-started; logging.info('AI request succeeded=yes model=%s response_status=%s request_id=%s latency=%.3fs',self.model,getattr(r,'status','unknown'),getattr(r,'_request_id','unknown'),latency)
+   latency=time.monotonic()-started; logging.info('OPENAI_REQUEST_SUCCEEDED model=%s response_status=%s request_id=%s latency_seconds=%.3f',self.model,getattr(r,'status','unknown'),getattr(r,'_request_id','unknown'),latency)
    return json.loads(r.output_text),latency,{'api_success':True,'status':getattr(r,'status','unknown'),'request_id':getattr(r,'_request_id','unknown'),'model':self.model}
   except AIError: raise
   except Exception as e:
-   logging.exception('AI request succeeded=no model=%s error_type=%s http_status=%s request_id=%s',self.model,type(e).__name__,getattr(e,'status_code','unknown'),getattr(e,'request_id','unknown'))
+   logging.exception('OPENAI_REQUEST_FAILED model=%s exception_type=%s message=%s http_status=%s request_id=%s',self.model,type(e).__name__,str(e),getattr(e,'status_code','unknown'),getattr(e,'request_id','unknown'))
    raise AIError(f'OpenAI request failed: {type(e).__name__}: {e}')

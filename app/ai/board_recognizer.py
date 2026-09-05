@@ -19,7 +19,7 @@ def recognize_image(image,model,debug=False,client=None):
         log.info('Debug AI input saved dimensions=%dx%d bytes=%d',w,h,len(png))
     try:data,latency,api= (client or OpenAIClient(model)).recognize(png,SCHEMA,BOARD_PROMPT)
     except Exception as e: raise RecognitionFailure('api_request',e) from e
-    log.info('Raw structured recognition result=%s',json.dumps(data,sort_keys=True))
+    log.info('OPENAI_RAW_RESULT result=%s',json.dumps(data,sort_keys=True))
     if debug: Path('debug/ai_result.json').write_text(json.dumps(data,indent=2,sort_keys=True),encoding='utf-8')
     try:result=parse(data)
     except Exception as e:
@@ -29,7 +29,7 @@ def recognize_image(image,model,debug=False,client=None):
     try:board=build_board(result)
     except Exception as e:
         log.exception('Reconstruction result=failed reason=%s',e); raise RecognitionFailure('reconstruction',e) from e
-    log.info('Reconstruction result=passed board_fen=%s full_fen=%s python_chess_valid=%s status=%s',board.board_fen(),board.fen(),board.is_valid(),board.status())
+    log.info('BOARD_RECONSTRUCTION_FEN board_fen=%s full_fen=%s',board.board_fen(),board.fen()); log.info('BOARD_VALIDATION_RESULT valid=%s status=%s',board.is_valid(),board.status())
     return board,result,latency,api
 
 class RecognitionWorker(QThread):

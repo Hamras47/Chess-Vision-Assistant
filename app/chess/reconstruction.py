@@ -8,7 +8,7 @@ def build_board(result):
         board.set_piece_at(chess.parse_square(name),chess.Piece(PIECE_TYPES[piece_name],color_name=='white'))
     board.turn=result.side_to_move!='black'; board.castling_rights=chess.BB_EMPTY; board.ep_square=None; board.clear_stack()
     white_kings=len(board.pieces(chess.KING,chess.WHITE)); black_kings=len(board.pieces(chess.KING,chess.BLACK)); status=board.status()
-    logging.info('Reconstruction FEN placement=%s turn=%s kings white=%d black=%d board.status=%s valid=%s',board.board_fen(),result.side_to_move,white_kings,black_kings,status,board.is_valid())
+    logging.info('BOARD_RECONSTRUCTION_FEN placement=%s turn=%s kings_white=%d kings_black=%d',board.board_fen(),result.side_to_move,white_kings,black_kings)
     if white_kings!=1 or black_kings!=1: raise ValueError(f'king count invalid: white={white_kings} black={black_kings}')
     for color, name in ((chess.WHITE, 'white'), (chess.BLACK, 'black')):
         pawns=board.pieces(chess.PAWN,color)
