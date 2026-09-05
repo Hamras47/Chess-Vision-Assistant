@@ -1,51 +1,25 @@
-# Chess Vision Assistant
+# Chess Vision Assistant V1.6
 
-A local Windows chess analysis and training tool. It provides a responsive PySide6 interactive board, python-chess legal-state handling, optional local Stockfish analysis, and a modular pixel-capture/vision pipeline. It never clicks, controls, injects into, or reads a chess website.
+V1.6 is a deliberately small, no-ML desktop assistant. Luna performs the initial 64-square board read and rare recovery only. Normal live play uses rapid local screen differences, python-chess legal-move matching, and Stockfish.
 
-## Install and run (PowerShell)
+The default vision model is exactly `gpt-5.6-luna`. Settings override `OPENAI_VISION_MODEL`, which overrides that default. The selected model is passed to the OpenAI Responses API unchanged.
+
+## Install and run
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -e .
 copy .env.example .env
+# Add OPENAI_API_KEY to .env and optionally configure Stockfish in Settings.
 python -m app.main
 ```
 
-Edit `.env` and set `OPENAI_API_KEY` before using **Scan Board**. `OPENAI_VISION_MODEL` is optional and defaults to `gpt-5`; change it in `.env` to any vision-capable model your account can use. The key is never stored in QSettings or source control.
+Use **Scan Board**, select the browser board, then choose your colour and whether it is your turn. Your selected colour controls the internal-board orientation. Canonical square names always remain standard chess coordinates.
 
-Stockfish is detected from saved and common local paths. If it is missing, use the gear button to locate `stockfish.exe`. Run tests with `pytest`.
+## Tracking and recovery
 
-## Live capture workflow
+The capture loop runs at 125 ms by default. A stable visual change is matched against legal moves; commits are atomic and reset the visual baseline. OpenAI recovery starts only after a persistent stable board change cannot be resolved locally. Recovery accepts an identical board, a unique 1/2-ply legal sequence, or a structurally valid high-confidence full resync.
 
-1. Click **Scan Board**. The app hides, captures the virtual desktop, and displays that frozen screenshot as a snipping surface.
-2. Drag around the visible chessboard. The loose selection is corrected to a square 8×8 crop and only that crop is sent to OpenAI.
-3. The structured piece list is validated, converted to one canonical `python-chess` board, displayed, and analyzed by Stockfish.
-4. Tracking starts automatically. A background worker captures only the corrected board region every 300 ms. Edge-weighted square differences suppress flat highlight changes; stable changed squares are matched against legal moves. Routine moves do not call OpenAI.
-5. If inference is ambiguous, the app attempts an AI recovery scan at most twice and at least five seconds apart. Persistent failure stops tracking and presents **Rescan**.
-
-## Current capabilities
-
-The compact interface exposes Scan/Rescan, the synchronized board, current status, best move, evaluation, alternatives, and one settings gear. OpenAI recognition, local tracking, and Stockfish all feed from the same `python-chess` board.
-
-## Architecture
-
-`app/chess/` owns reconstruction, coordinates, and tolerant legal-move matching; `app/ai/` performs structured visual transcription; one persistent worker in `app/engine.py` owns Stockfish and discards stale board versions; `app/vision/` owns frozen-desktop capture, crop correction, adaptive multi-signal change detection, temporal stabilization, and the resilient tracking worker. The UI thread alone replaces or pushes onto the canonical `python-chess.Board`.
-
-The internal board uses bundled Cburnett SVG pieces with high-contrast color adjustments. Rendering reads the canonical board on every paint and caches only size-specific SVG rasterizations, never occupancy.
-
-## Roadmap / limitation
-
-A single screenshot cannot establish historical castling rights or an en-passant target. Arbitrary midgame scans therefore use conservative rights. Promotion choice may require AI recovery because all promotion moves affect the same two visual squares. Real-world recognition quality depends on the selected model and a clean board crop.
-
-Tracking thresholds are calibrated from initial unchanged frames. Stable changes are logged with per-square scores, current FEN, ranked legal candidates, acceptance confidence, and rejection reason. Capture failures are retried, and a bounded watchdog restarts a stopped tracker. Rotating runtime logs are stored in `logs/chess_vision.log`; uncaught exceptions and board/session context are stored in `logs/crash.log`.
-
-## AI recognition diagnostics
-
-Set `CHESS_VISION_DEBUG=1` before launching. A scan then saves the exact uploaded PNG to `debug/ai_input.png`, the parsed response to `debug/ai_result.json`, the immediate physical recapture to `debug/post_selection_capture.png`, and the frozen selection to `debug/selected_frozen.png`. The log records request status, configured model, dimensions, raw structured data, piece count, FEN placement, `python-chess` status, and the exact failed stage.
-
-Repeat the same recognition pipeline without the GUI:
-
-```powershell
-python -m app.ai.debug_scan debug/ai_input.png
-```
+There are no Torch, ONNX, MobileNet, scikit-learn, model files, or square classifiers in the V1.6 runtime.

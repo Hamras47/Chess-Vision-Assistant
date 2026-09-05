@@ -6,11 +6,11 @@ def parse_analysis(board,infos):
         score=info['score'].pov(board.turn); move=info['pv'][0]; rows.append((board.san(move),move.uci(),score.score(mate_score=100000),score.mate(),info.get('depth',0)))
     return rows
 class EngineWorker(QThread):
-    result=Signal(int,object); error=Signal(int,str)
+    result=Signal(int,int,object); error=Signal(int,int,str)
     def __init__(self,path,analysis_time=.6,depth=18,multipv=3):
         super().__init__(); self.path=path; self.analysis_time=analysis_time; self.depth=depth; self.multipv=multipv; self._condition=threading.Condition(); self._pending=None; self._running=True
-    def submit(self,fen,version):
-        with self._condition:self._pending=(fen,version); self._condition.notify()
+    def submit(self,fen,session,version):
+        with self._condition:self._pending=(fen,session,version); self._condition.notify()
     def run(self):
         engine=None
         try:
@@ -20,11 +20,11 @@ class EngineWorker(QThread):
                 with self._condition:
                     while self._pending is None and self._running:self._condition.wait(.5)
                     if not self._running:break
-                    fen,version=self._pending; self._pending=None
+                    fen,session,version=self._pending; self._pending=None
                 try:
-                    board=chess.Board(fen); infos=engine.analyse(board,chess.engine.Limit(time=self.analysis_time,depth=self.depth),multipv=self.multipv); self.result.emit(version,parse_analysis(board,infos))
-                except Exception as e:self.error.emit(version,str(e))
-        except Exception as e:self.error.emit(-1,str(e))
+                    board=chess.Board(fen); infos=engine.analyse(board,chess.engine.Limit(time=self.analysis_time,depth=self.depth),multipv=self.multipv); self.result.emit(session,version,parse_analysis(board,infos))
+                except Exception as e:self.error.emit(session,version,str(e))
+        except Exception as e:self.error.emit(-1,-1,str(e))
         finally:
             if engine:
                 try:engine.quit()

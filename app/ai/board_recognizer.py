@@ -25,6 +25,7 @@ def recognize_image(image,model,debug=False,client=None):
     except Exception as e:
         log.exception('Schema validation result=failed reason=%s',e); raise RecognitionFailure('schema_validation',e) from e
     log.info('Schema validation result=passed orientation=%s side_to_move=%s confidence=%.3f piece_count=%d warnings=%s',result.orientation,result.side_to_move,result.confidence,piece_count(result),result.warnings)
+    if result.confidence < .90: raise RecognitionFailure('confidence',f'confidence {result.confidence:.3f} is below 0.90')
     try:board=build_board(result)
     except Exception as e:
         log.exception('Reconstruction result=failed reason=%s',e); raise RecognitionFailure('reconstruction',e) from e

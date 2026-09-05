@@ -1,12 +1,17 @@
 import chess
 
-def reconcile_reconstruction(board,reconstructed):
-    """Preserve move history when a recovered position is the current or next legal state."""
-    if board.piece_map()==reconstructed.piece_map():return board,None
+def reconcile_reconstruction(board,reconstructed,max_plies=2):
+    """Find a unique 0/1/2-ply legal path to a vision-reconstructed placement."""
+    target=reconstructed.piece_map()
+    if board.piece_map()==target:return board,()
     matches=[]
-    for move in board.legal_moves:
-        candidate=board.copy(); candidate.push(move)
-        if candidate.piece_map()==reconstructed.piece_map():matches.append((candidate,move))
+    def walk(position,moves,depth):
+        if depth==0:return
+        for move in position.legal_moves:
+            candidate=position.copy(); candidate.push(move); sequence=moves+(move,)
+            if candidate.piece_map()==target: matches.append((candidate,sequence))
+            elif depth>1: walk(candidate,sequence,depth-1)
+    walk(board,(),max_plies)
     return matches[0] if len(matches)==1 else (None,None)
 
 def expected_changed_squares(board,move):

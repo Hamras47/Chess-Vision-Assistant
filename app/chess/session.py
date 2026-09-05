@@ -4,6 +4,11 @@ import chess
 
 from .coordinates import Orientation
 
+SYNCED='SYNCED'
+VERIFYING='VERIFYING'
+RECOVERING='RECOVERING'
+LOST='LOST'
+
 
 @dataclass
 class TrackingSession:
@@ -19,7 +24,7 @@ class TrackingSession:
     last_capture_signature: Any=None
     last_accepted_signature: Any=None
     frame_sequence: int=0
-    tracking_state: str='WATCHING'
+    tracking_state: str=SYNCED
     local_recoveries: int=0
     two_ply_recoveries: int=0
     ai_recoveries: int=0

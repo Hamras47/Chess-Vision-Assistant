@@ -10,6 +10,10 @@ def build_board(result):
     white_kings=len(board.pieces(chess.KING,chess.WHITE)); black_kings=len(board.pieces(chess.KING,chess.BLACK)); status=board.status()
     logging.info('Reconstruction FEN placement=%s turn=%s kings white=%d black=%d board.status=%s valid=%s',board.board_fen(),result.side_to_move,white_kings,black_kings,status,board.is_valid())
     if white_kings!=1 or black_kings!=1: raise ValueError(f'king count invalid: white={white_kings} black={black_kings}')
+    for color, name in ((chess.WHITE, 'white'), (chess.BLACK, 'black')):
+        pawns=board.pieces(chess.PAWN,color)
+        if len(pawns)>8: raise ValueError(f'too many {name} pawns')
+        if pawns & (chess.BB_RANK_1 | chess.BB_RANK_8): raise ValueError(f'{name} pawn on first or eighth rank')
     wk=board.king(chess.WHITE); bk=board.king(chess.BLACK)
     if chess.square_distance(wk,bk)<=1: raise ValueError('kings are adjacent')
     if not board.is_valid(): raise ValueError(f'python-chess rejected piece placement: status={status}')

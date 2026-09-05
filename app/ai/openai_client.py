@@ -1,15 +1,19 @@
 import os, json, base64, time, logging
 from dotenv import load_dotenv
 load_dotenv()
+DEFAULT_OPENAI_VISION_MODEL = 'gpt-5.6-luna'
 class AIError(RuntimeError): pass
 def normalize_model(model):
- # Codex desktop model aliases are not interchangeable with OpenAI API model IDs.
- if model in {'gpt-5.6-luna','gpt-5.6-terra','gpt-5.6-sol'}: return 'gpt-5.2'
- return model
+ """Return the configured API model verbatim, with only an empty value defaulted."""
+ return str(model or '').strip() or DEFAULT_OPENAI_VISION_MODEL
+
+def resolve_model(settings_model=None, environment=None):
+ """Settings take precedence over .env, then use the V1.6 Luna default."""
+ env = os.environ if environment is None else environment
+ return normalize_model(settings_model or env.get('OPENAI_VISION_MODEL') or DEFAULT_OPENAI_VISION_MODEL)
 class OpenAIClient:
  def __init__(self, model=None, client=None):
-  requested=model or os.getenv('OPENAI_VISION_MODEL','gpt-5.2'); self.model=normalize_model(requested); self._client=client
-  if requested!=self.model: logging.warning('Configured model %s is a Codex alias, using API vision model %s',requested,self.model)
+  self.model=normalize_model(model or os.getenv('OPENAI_VISION_MODEL') or DEFAULT_OPENAI_VISION_MODEL); self._client=client
  def ready(self): return bool(os.getenv('OPENAI_API_KEY'))
  def client(self):
   if not self.ready(): raise AIError('OpenAI API key missing. Add OPENAI_API_KEY to .env and restart.')

@@ -25,7 +25,7 @@ def test_ai_key_missing_is_safe(monkeypatch):
  with pytest.raises(AIError,match='key missing'):c.client()
 def test_schema_has_all_64_fixed_square_keys():
  squares=SCHEMA['properties']['squares']; assert len(squares['required'])==64 and squares['additionalProperties'] is False and 'unknown' not in squares['properties']['e4']['enum']
-def test_codex_desktop_alias_is_not_sent_to_api(): assert normalize_model('gpt-5.6-luna')=='gpt-5.2'
+def test_luna_model_is_passed_to_api_unchanged(): assert normalize_model('gpt-5.6-luna')=='gpt-5.6-luna'
 def test_exact_e4_e5_position_reconstruction():
  placement={}; back='rnbqkbnr'; names={'r':'rook','n':'knight','b':'bishop','q':'queen','k':'king'}
  for file,symbol in zip('abcdefgh',back): placement[file+'8']='black_'+names[symbol]; placement[file+'1']='white_'+names[symbol]

@@ -13,11 +13,12 @@ def test_player_color_controls_only_app_display_orientation(color,orientation):
 def test_reconstruction_reconciliation_preserves_legal_turn_sequence():
  board=chess.Board(); reconstructed=board.copy(); reconstructed.push_uci('e2e4')
  recovered,move=reconcile_reconstruction(board,reconstructed)
- assert move.uci()=='e2e4' and recovered.turn==chess.BLACK and recovered.move_stack[-1]==move
+ assert tuple(item.uci() for item in move)==('e2e4',) and recovered.turn==chess.BLACK and recovered.move_stack[-1].uci()=='e2e4'
 
 def test_reconstruction_reconciliation_rejects_non_single_move_jump():
  board=chess.Board(); reconstructed=board.copy(); reconstructed.push_uci('e2e4'); reconstructed.push_uci('e7e5')
- assert reconcile_reconstruction(board,reconstructed)==(None,None)
+ recovered,moves=reconcile_reconstruction(board,reconstructed)
+ assert [move.uci() for move in moves]==['e2e4','e7e5'] and recovered.turn==chess.WHITE
 
 def test_bounded_two_ply_recovery_finds_fast_move_and_reply():
  board=chess.Board(); visible=board.copy(); visible.push_uci('e2e4'); visible.push_uci('e7e5'); observed=transition_squares(board,visible); scores={square:(.10 if square in observed else 0.) for square in chess.SQUARES}
@@ -110,7 +111,7 @@ def test_other_castling_directions(fen,uci):
 def test_en_passant_squares_and_inference():
  b=chess.Board(); [b.push_uci(x) for x in ['e2e4','a7a6','e4e5','d7d5']]; m=chess.Move.from_uci('e5d6'); got,_,_=infer_move(b,expected_changed_squares(b,m)); assert got==m
 def test_promotion_inference():
- b=chess.Board('8/P7/8/8/8/8/7p/4K2k w - - 0 1'); m=chess.Move.from_uci('a7a8q'); got,_,_=infer_move(b,expected_changed_squares(b,m)); assert got is None # promotion image needs local classifier to disambiguate piece choice
+ b=chess.Board('8/P7/8/8/8/8/7p/4K2k w - - 0 1'); m=chess.Move.from_uci('a7a8q'); got,_,_=infer_move(b,expected_changed_squares(b,m)); assert got is None # visual evidence alone cannot choose the promotion piece
 def test_extra_highlight_square_is_tolerated():
  b=chess.Board(); move,score,_=infer_move(b,{chess.E2,chess.E4,chess.E5}); assert move.uci()=='e2e4' and score>.8
 def test_weak_destination_signal_fallback():
