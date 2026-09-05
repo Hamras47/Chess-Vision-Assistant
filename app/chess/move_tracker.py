@@ -21,13 +21,17 @@ def expected_changed_squares(board,move):
     if board.is_en_passant(move):changed.add(chess.square(chess.square_file(move.to_square),chess.square_rank(move.from_square)))
     return changed
 def _candidate_score(expected,observed):
-    return max(0.,len(expected&observed)/max(1,len(expected))-.58*len(expected-observed)-.08*len(observed-expected))
-def infer_move(board,observed,relaxed=False):
-    candidates=sorted([(_candidate_score(expected_changed_squares(board,m),observed),m,expected_changed_squares(board,m)) for m in board.legal_moves],key=lambda x:x[0],reverse=True)
-    minimum=.50 if relaxed else .72; margin=.08 if relaxed else .14
+    """Missing a piece transition matters far more than highlight-only extras."""
+    coverage=len(expected&observed)/max(1,len(expected)); missing=len(expected-observed); extra=len(observed-expected)
+    return max(0.,coverage-.82*missing-.012*extra)
+def infer_move(board,observed,relaxed=False,prior_uci=None):
+    candidates=sorted([(_candidate_score(expected_changed_squares(board,m),observed)+(.04 if prior_uci==m.uci() else 0.),m,expected_changed_squares(board,m)) for m in board.legal_moves],key=lambda x:x[0],reverse=True)
+    minimum=.50 if relaxed else .72
+    margin=.08 if relaxed else (.03 if prior_uci else (.05 if candidates and candidates[0][0]>=.90 else .14))
     if not candidates or candidates[0][0]<minimum:return None,(candidates[0][0] if candidates else 0.),candidates[:8]
-    if len(candidates)>1 and candidates[0][0]-candidates[1][0]<margin:return None,candidates[0][0],candidates[:8]
     if len(candidates)>1 and candidates[0][2]==candidates[1][2] and candidates[0][1].promotion:return None,candidates[0][0],candidates[:8]
+    if candidates[0][2]==observed:return candidates[0][1],candidates[0][0],candidates[:8]
+    if len(candidates)>1 and candidates[0][0]-candidates[1][0]<margin:return None,candidates[0][0],candidates[:8]
     return candidates[0][1],candidates[0][0],candidates[:8]
 def infer_move_from_scores(board,scores,threshold):
     candidates=[]

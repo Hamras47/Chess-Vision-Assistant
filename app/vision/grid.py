@@ -1,5 +1,10 @@
 import cv2, numpy as np
 
+def locked_square_crop(image):
+    """Center-crop a user's selection to a square without expanding it."""
+    height,width=image.shape[:2]; size=min(width,height); x=(width-size)//2; y=(height-size)//2
+    return image[y:y+size,x:x+size],(x,y,size,size)
+
 def board_crop(image):
     """Find a near-square region whose 64 cells exhibit alternating grid structure."""
     h,w=image.shape[:2]; side=min(h,w); best=(-1,0,0,side)

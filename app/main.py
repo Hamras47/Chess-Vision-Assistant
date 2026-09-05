@@ -5,8 +5,7 @@ from PySide6.QtCore import Qt,QSettings,QTimer
 from .board_widget import ChessBoardWidget
 from .engine import EngineWorker
 from .vision.capture import ScreenCapture
-from .vision.grid import board_crop
-from .vision.alignment import corrected_board,geometry_changed,plausible_board_crop,search_region
+from .vision.grid import locked_square_crop
 from .vision.change_detector import score_squares,AdaptiveThreshold,frame_signature,signature_difference
 from .vision.stabilizer import Stabilizer
 from .vision.tracking_worker import TrackingWorker
@@ -22,7 +21,7 @@ from .core.logging_setup import LOG_DIRECTORY,configure,install_exception_hook
 class MainWindow(QMainWindow):
  def __init__(self):
   super().__init__(); self.settings=QSettings('ChessVisionAssistant','V16'); self.debug=self.settings.value('debug_mode',False,type=bool) or os.getenv('CHESS_VISION_DEBUG')=='1'; configure(self.debug)
-  stored=self.settings.value('ai_model','',type=str); self.model=resolve_model(stored); self.openai_client=OpenAIClient(self.model); logging.info('APP_START'); logging.info('OPENAI_MODEL_RESOLVED model=%s source=%s',self.model,'settings' if stored else 'environment_or_default'); logging.info('PIECE_STATE_FROM_CANONICAL_ONLY'); self.engine_path=self.find_engine(); self.session=TrackingSession(); self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.recovery_in_progress=False; self.recovery_request_id=0; self.recovery_started=0.; self.verifying_started=0.; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.pending_move=None; self.board_anchor=None; self.board_size=0; self.square_size=0.; self.restart_times=[]; self.restart_pending=False; self._closing=False
+  stored=self.settings.value('ai_model','',type=str); self.model=resolve_model(stored); self.openai_client=OpenAIClient(self.model); logging.info('APP_START'); logging.info('OPENAI_MODEL_RESOLVED model=%s source=%s',self.model,'settings' if stored else 'environment_or_default'); logging.info('PIECE_STATE_FROM_CANONICAL_ONLY'); self.engine_path=self.find_engine(); self.session=TrackingSession(); self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.recovery_in_progress=False; self.recovery_request_id=0; self.recovery_started=0.; self.verifying_started=0.; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.pending_move=None; self.board_size=0; self.square_size=0.; self.massive_change_frames=0; self.last_recommended_uci=None; self.restart_times=[]; self.restart_pending=False; self._closing=False
   self.setWindowTitle('Chess Vision Assistant V1.6'); self.resize(850,570); self.setWindowFlag(Qt.WindowStaysOnTopHint,True)
   root=QWidget(); self.setCentralWidget(root); outer=QVBoxLayout(root); header=QHBoxLayout(); title=QLabel('Chess Vision Assistant'); title.setObjectName('title'); gear=QPushButton('⚙'); gear.setFixedWidth(42); gear.clicked.connect(self.open_settings); header.addWidget(title); header.addStretch(); header.addWidget(gear); outer.addLayout(header)
   body=QHBoxLayout(); self.view=ChessBoardWidget(); body.addWidget(self.view,1); side=QVBoxLayout(); self.position=QLabel('POSITION\nReady'); self.playing=QLabel('Playing: White'); self.best=QLabel('BEST MOVE\n—'); self.evaluation=QLabel('Evaluation —'); self.alts=QLabel(''); self.scan_button=QPushButton('SCAN BOARD'); self.scan_button.clicked.connect(self.scan_board); side.addWidget(self.position); side.addWidget(self.playing); side.addSpacing(18); side.addWidget(self.best); side.addWidget(self.evaluation); side.addWidget(self.alts); side.addStretch(); side.addWidget(self.scan_button); body.addLayout(side); outer.addLayout(body,1); self.status=QLabel('Ready'); outer.addWidget(self.status)
@@ -60,28 +59,15 @@ class MainWindow(QMainWindow):
   old_state=self.session.tracking_state
   self.session.tracking_state=new_state
   if old_state!=new_state:logging.info('SYNC_STATE_CHANGED old_state=%s new_state=%s reason=%s',old_state,new_state,reason)
- def set_board_geometry(self,rect,crop,reason):
-  old=self.region.copy() if self.region else None; changed=geometry_changed(old,rect); self.region=dict(rect); self.board_anchor=(rect['left'],rect['top']); self.board_size=rect['width']; self.square_size=rect['width']/8
-  if changed and old:
-   if old['width']!=rect['width']:logging.info('BOARD_RESIZED old_size=%d new_size=%d',old['width'],rect['width'])
-   logging.info('BOARD_REANCHORED old_rect=%s new_rect=%s',old,rect)
-  logging.info('CORRECTED_BOARD_RECT x=%d y=%d w=%d h=%d SQUARE_SIZE=%.2f',rect['left'],rect['top'],rect['width'],rect['height'],self.square_size)
-  if crop is not None:self.reset_baseline(crop); logging.info('GEOMETRY_BASELINE_RESET reason=%s',reason)
+ def lock_board_rect(self,rect,crop):
+  self.region=dict(rect); self.board_size=rect['width']; self.square_size=rect['width']/8; self.reset_baseline(crop); logging.info('BOARD_RECT_LOCKED x=%d y=%d size=%d',rect['left'],rect['top'],rect['width'])
  def save_openai_crop(self,crop):
   if self.debug:
    debug=LOG_DIRECTORY/'debug'; debug.mkdir(parents=True,exist_ok=True); cv2.imwrite(str(debug/'latest_openai_board.png'),crop)
  def crop_is_valid(self,crop):
-  valid,reason=plausible_board_crop(crop)
-  logging.info('RECOVERY_CROP_%s size=%s reason=%s','VALIDATED' if valid else 'REJECTED',None if crop is None else f'{crop.shape[1]}x{crop.shape[0]}',reason)
+  valid=crop is not None and crop.ndim==3 and crop.shape[0]==crop.shape[1] and crop.shape[0]>=64
+  logging.info('RECOVERY_CROP_%s size=%s reason=%s','VALIDATED' if valid else 'REJECTED',None if crop is None else f'{crop.shape[1]}x{crop.shape[0]}','locked board rectangle' if valid else 'not a plausible square crop')
   return valid
- def reanchor_board(self,reason):
-  if not self.region:return None
-  try:
-   search=search_region(self.region); image=ScreenCapture().grab(search); crop,rect,status=corrected_board(image,search)
-   if crop is None:logging.warning('BOARD_ALIGNMENT_SUSPECTED reason=%s detail=%s',reason,status); return None
-   self.set_board_geometry(rect,crop,reason); self.set_sync_state(SYNCED,'board geometry reanchored'); logging.info('BOARD_ALIGNMENT_OK rect=%s',rect); return crop
-  except Exception:
-   logging.exception('BOARD_ALIGNMENT_SUSPECTED reason=%s',reason); return None
  def find_engine(self):
   stored=self.settings.value('stockfish','')
   if stored and Path(stored).exists():return stored
@@ -109,9 +95,8 @@ class MainWindow(QMainWindow):
  def snip_selected(self,selection):
   self.close_selectors(); rough=selection['physical']; self.logical_selection=selection['logical']; self.physical_selection=rough; logging.info('RAW_SELECTION x=%d y=%d w=%d h=%d',rough['left'],rough['top'],rough['width'],rough['height'])
   try:
-   image=ScreenCapture().grab(rough); crop,rect,status=corrected_board(image,rough)
-   if crop is None:raise ValueError(f'board calibration failed: {status}')
-   self.set_board_geometry(rect,crop,'initial calibration'); logging.info('BOARD_REGION_SELECTED x=%d y=%d width=%d height=%d',self.region['left'],self.region['top'],self.region['width'],self.region['height'])
+   image=ScreenCapture().grab(rough); crop,(x,y,size,_)=locked_square_crop(image); rect={'left':rough['left']+x,'top':rough['top']+y,'width':size,'height':size}
+   self.lock_board_rect(rect,crop); logging.info('BOARD_REGION_SELECTED x=%d y=%d width=%d height=%d',self.region['left'],self.region['top'],self.region['width'],self.region['height'])
    if self.debug:
     Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/post_selection_capture.png',image); cv2.imwrite('debug/selected_frozen.png',selection['frozen_image'])
     same=image.shape==selection['frozen_image'].shape and np.array_equal(image,selection['frozen_image']); logging.debug('Frozen selection versus post-selection capture exact_pixel_match=%s frozen_shape=%s post_shape=%s',same,selection['frozen_image'].shape,image.shape)
@@ -164,7 +149,7 @@ class MainWindow(QMainWindow):
    return
   logging.error('WORKER_ERROR worker=recognition error=%s',technical); self.stop_tracking(); self.position.setText('POSITION\nTracking lost'); self.user_error('Could not recognize board.')
  def start_tracking(self):
-  self.stop_tracking(); session=self.tracking_session_id; self.threshold=AdaptiveThreshold(); self.baseline_frames=6; self.stabilizer=Stabilizer(delay_ms=150,required_frames=2); self.last_capture=time.monotonic(); interval=max(75,min(500,int(self.settings.value('tracking_interval',125)))); self.tracker=TrackingWorker(self.region,interval); self.tracker.frame.connect(lambda crop:self.tracking_frame(session,crop)); self.tracker.heartbeat.connect(lambda stamp:self.tracker_heartbeat(session,stamp)); self.tracker.metrics.connect(lambda fps,average,count:self.tracker_metrics(session,fps,average,count)); self.tracker.failed.connect(lambda error:self.tracker_failed(session,error)); self.tracker.start(); logging.info('TRACKER_STARTED interval_ms=%d session=%d',interval,session)
+  self.stop_tracking(); session=self.tracking_session_id; self.threshold=AdaptiveThreshold(); self.baseline_frames=6; self.stabilizer=Stabilizer(delay_ms=250,required_frames=2); self.last_capture=time.monotonic(); interval=max(75,min(500,int(self.settings.value('tracking_interval',125)))); self.tracker=TrackingWorker(self.region,interval); self.tracker.frame.connect(lambda crop:self.tracking_frame(session,crop)); self.tracker.heartbeat.connect(lambda stamp:self.tracker_heartbeat(session,stamp)); self.tracker.metrics.connect(lambda fps,average,count:self.tracker_metrics(session,fps,average,count)); self.tracker.failed.connect(lambda error:self.tracker_failed(session,error)); self.tracker.start(); logging.info('TRACKER_STARTED interval_ms=%d session=%d',interval,session)
  def stop_tracking(self):
   if self.tracker:self.tracker.stop(); self.tracker=None
  def retry_recovery(self):
@@ -187,18 +172,19 @@ class MainWindow(QMainWindow):
   if self.baseline_frames>0 and (not numeric or max(numeric.values())<threshold):self.threshold.sample(signals); self.baseline_frames-=1; threshold=self.threshold.value
   if not observed:self.stabilizer.observe(crop,False); self.set_sync_state(SYNCED,'no square-level change'); self.pending_move=None; return
   if len(observed)>12:
-   logging.warning('BOARD_ALIGNMENT_SUSPECTED changed_count=%d',len(observed)); aligned=self.reanchor_board('massive changed-square event')
-   if aligned is not None:self.set_sync_state(SYNCED,'geometry baseline reset'); return
-   self.recover(crop); return
+   self.massive_change_frames+=1; logging.warning('CHANGE_STARTED changed_count=%d locked_rect=%s',len(observed),self.region)
+   if self.massive_change_frames<2:self.set_sync_state(VERIFYING,'implausible visual change awaiting stable retry'); self.stabilizer.reset(); return
+   self.massive_change_frames=0; self.recover(crop); return
+  self.massive_change_frames=0
   self.set_sync_state(VERIFYING,'changed squares awaiting stabilization'); self.status.setText('● Verifying board')
   if not self.stabilizer.observe(crop,True):return
   if self.debug:Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/current_stable_frame.png',crop)
-  self.last_stable=now; move,confidence,candidates=infer_move(self.board,observed); matched=observed
+  self.last_stable=now; logging.info('STABLE_CHANGE squares=%s',[chess.square_name(square) for square in sorted(observed)]); move,confidence,candidates=infer_move(self.board,observed,prior_uci=self.last_recommended_uci); matched=observed
   if not move:
-   matched={sq for sq,value in numeric.items() if value>=max(.025,threshold*.62)}; move,confidence,candidates=infer_move(self.board,matched,True)
+   matched={sq for sq,value in numeric.items() if value>=max(.025,threshold*.62)}; move,confidence,candidates=infer_move(self.board,matched,True,self.last_recommended_uci)
   if not move:move,confidence,candidates=infer_move_from_scores(self.board,numeric,threshold)
   visual_mapping={f'r{square_to_visual(s,self.session.browser_orientation)[0]}c{square_to_visual(s,self.session.browser_orientation)[1]}':chess.square_name(s) for s in observed}
-  logging.info('CHANGE_DETECTED squares=%s threshold=%.4f',[chess.square_name(square) for square in sorted(observed)],threshold); logging.info('LEGAL_MOVE_CANDIDATES candidates=%s',[(candidate.uci(),round(score,3)) for score,candidate,_ in candidates]); logging.info('LEGAL_MOVE_SELECTED move=%s confidence=%.3f',move.uci() if move else None,confidence)
+  logging.info('LEGAL_MATCH candidates=%s selected=%s confidence=%.3f',[(candidate.uci(),round(score,3)) for score,candidate,_ in candidates],move.uci() if move else None,confidence)
   if move:
    plausibility=visual_plausibility(self.board,move,matched,numeric,threshold); key=(self.board_version,move.uci())
    if confidence>=.90 and plausibility>=.82:self.accept_sequence((move,),crop,signature,'normal',confidence)
@@ -212,13 +198,14 @@ class MainWindow(QMainWindow):
   for move in moves:
    if move not in staged.legal_moves:logging.warning('Rejected stale/illegal recovery move=%s version=%d',move,self.board_version); return False
    mover=staged.turn; san=staged.san(move); staged.push(move); notation.append(('...'+san if mover==chess.BLACK else san,mover))
-  self.board=staged; self.board_version+=len(moves); self.last_move=time.monotonic(); self.reset_baseline(crop,signature); self.session.failed_ai_recoveries=0; self.set_sync_state(SYNCED,'legal move committed'); self.pending_move=None; self.stabilizer.reset(); self.view.set_board(self.board); self.recovery_attempts=0
+  user_move=self.board.turn==self.player_color; self.board=staged; self.board_version+=len(moves); self.last_move=time.monotonic(); self.reset_baseline(crop,signature); self.session.failed_ai_recoveries=0; self.set_sync_state(SYNCED,'legal move committed'); self.pending_move=None; self.stabilizer.reset(); self.view.set_board(self.board); self.recovery_attempts=0
+  if user_move:self.last_recommended_uci=None; self.view.arrow=None; self.best.setText('BEST MOVE\n—'); self.evaluation.setText('Evaluation —'); self.alts.setText('')
   last_text,last_mover=notation[-1]; self.status.setText(('Opponent: ' if last_mover==self.opponent_color else 'Played: ')+last_text); self.position.setText('POSITION\n'+('● Your turn' if self.board.turn==self.player_color else '● Watching')); logging.info('Accepted sequence=%s source=%s confidence=%.3f version=%d',','.join(move.uci() for move in moves),source,confidence,self.board_version)
   assert self.view.piece_map()==self.board.piece_map()
   if self.debug:Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/last_accepted_frame.png',crop)
   logging.info('MOVE_COMMITTED moves=%s source=%s',','.join(move.uci() for move in moves),source); self.analyze(); return True
  def reset_baseline(self,crop,signature=None):
-  self.previous=crop.copy(); self.session.last_accepted_signature=signature if signature is not None else frame_signature(crop); self.session.last_capture_signature=self.session.last_accepted_signature; self.stabilizer.reset(); logging.info('BASELINE_INITIALIZED version=%d',self.board_version)
+  self.previous=crop.copy(); self.session.last_accepted_signature=signature if signature is not None else frame_signature(crop); self.session.last_capture_signature=self.session.last_accepted_signature; self.stabilizer.reset(); logging.info('BASELINE_RESET version=%d locked_rect=%s',self.board_version,self.region)
  def try_local_recovery(self,crop,signature,observed,numeric,threshold):
   now=time.monotonic()
   self.set_sync_state(VERIFYING,'bounded local reconciliation'); sequence,confidence,candidates=infer_legal_sequence(self.board,observed,numeric,threshold,2); logging.info('LEGAL_MOVE_CANDIDATES candidates=%s confidence=%.3f',[(','.join(m.uci() for m in moves),round(score,3)) for score,moves,_ in candidates],confidence)
@@ -235,10 +222,9 @@ class MainWindow(QMainWindow):
  def capture_recovery_board(self,request_id):
   if not self.recovery_in_progress or request_id!=self.recovery_request_id:return
   try:
-   old_rect=self.region.copy() if self.region else None; crop=self.reanchor_board('pre-recovery capture'); geometry_changed_now=geometry_changed(old_rect,self.region) if old_rect else False
+   crop=ScreenCapture().grab(self.region)
    self.show(); self.raise_()
-   if crop is None:self.ai_failed(self.tracking_session_id,self.board_version,'bad recovery crop after re-anchor',request_id); return
-   if geometry_changed_now:self.recovery_in_progress=False; self.set_sync_state(SYNCED,'geometry correction before recovery'); return
+   if crop is None:self.ai_failed(self.tracking_session_id,self.board_version,'bad locked recovery crop',request_id); return
    self.start_ai(crop,True,request_id)
   except Exception:
    self.show(); self.raise_(); logging.exception('WORKER_ERROR worker=recovery_capture'); self.ai_failed(self.tracking_session_id,self.board_version,'recovery capture failed',request_id)
@@ -278,7 +264,7 @@ class MainWindow(QMainWindow):
   self.status.setText('Your turn — analyzing...'); logging.info('STOCKFISH_STARTED version=%d',self.board_version); self.engine_worker.submit(self.board.fen(),self.tracking_session_id,self.board_version)
  def analysis_done(self,session,version,rows):
   if session!=self.tracking_session_id or version!=self.board_version or self.player_color is None or self.board.turn!=self.player_color or self.session.tracking_state!=SYNCED or not rows:logging.info('Discarded stale/inapplicable Stockfish result'); return
-  san,uci,score,mate,_=rows[0]; self.best.setText(f'BEST MOVE\n{san}\n{uci[:2]} → {uci[2:4]}'); self.evaluation.setText('Evaluation '+(f'Mate {mate}' if mate is not None else f'{score/100:+.2f}')); self.alts.setText('Alternatives: '+', '.join(x[0] for x in rows[1:3])); self.view.arrow=(chess.parse_square(uci[:2]),chess.parse_square(uci[2:4])); self.view.update(); self.status.setText('Your turn'); logging.info('STOCKFISH_RESULT version=%d',version)
+  san,uci,score,mate,_=rows[0]; self.last_recommended_uci=uci; self.best.setText(f'BEST MOVE\n{san}\n{uci[:2]} → {uci[2:4]}'); self.evaluation.setText('Evaluation '+(f'Mate {mate}' if mate is not None else f'{score/100:+.2f}')); self.alts.setText('Alternatives: '+', '.join(x[0] for x in rows[1:3])); self.view.arrow=(chess.parse_square(uci[:2]),chess.parse_square(uci[2:4])); self.view.update(); self.status.setText('Your turn'); logging.info('STOCKFISH_RESULT version=%d',version)
  def open_settings(self):
   dialog=QDialog(self); dialog.setWindowTitle('Settings'); form=QFormLayout(dialog); model=QLineEdit(self.model); reset=QPushButton('RESET TO DEFAULT'); reset.clicked.connect(lambda:model.setText(DEFAULT_OPENAI_VISION_MODEL)); form.addRow('OpenAI model:',model); form.addRow('',reset); buttons=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel); buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); form.addRow(buttons)
   if dialog.exec()!=QDialog.Accepted:return
