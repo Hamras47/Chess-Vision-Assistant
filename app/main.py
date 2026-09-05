@@ -6,6 +6,7 @@ from .board_widget import ChessBoardWidget
 from .engine import EngineWorker
 from .vision.capture import ScreenCapture
 from .vision.grid import board_crop
+from .vision.alignment import corrected_board,geometry_changed,plausible_board_crop,search_region
 from .vision.change_detector import score_squares,AdaptiveThreshold,frame_signature,signature_difference
 from .vision.stabilizer import Stabilizer
 from .vision.tracking_worker import TrackingWorker
@@ -16,12 +17,12 @@ from .ai.openai_client import OpenAIClient,DEFAULT_OPENAI_VISION_MODEL,resolve_m
 from .chess.move_tracker import infer_move,infer_move_from_scores,infer_legal_sequence,visual_plausibility,reconcile_reconstruction
 from .chess.coordinates import Orientation,square_to_visual
 from .chess.session import TrackingSession,SYNCED,VERIFYING,RECOVERING,LOST
-from .core.logging_setup import configure,install_exception_hook
+from .core.logging_setup import LOG_DIRECTORY,configure,install_exception_hook
 
 class MainWindow(QMainWindow):
  def __init__(self):
   super().__init__(); self.settings=QSettings('ChessVisionAssistant','V16'); self.debug=self.settings.value('debug_mode',False,type=bool) or os.getenv('CHESS_VISION_DEBUG')=='1'; configure(self.debug)
-  stored=self.settings.value('ai_model','',type=str); self.model=resolve_model(stored); self.openai_client=OpenAIClient(self.model); logging.info('APP_START'); logging.info('OPENAI_MODEL_RESOLVED model=%s source=%s',self.model,'settings' if stored else 'environment_or_default'); self.engine_path=self.find_engine(); self.session=TrackingSession(); self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.recovery_started=0.; self.verifying_started=0.; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.pending_move=None; self.restart_times=[]; self.restart_pending=False; self._closing=False
+  stored=self.settings.value('ai_model','',type=str); self.model=resolve_model(stored); self.openai_client=OpenAIClient(self.model); logging.info('APP_START'); logging.info('OPENAI_MODEL_RESOLVED model=%s source=%s',self.model,'settings' if stored else 'environment_or_default'); logging.info('PIECE_STATE_FROM_CANONICAL_ONLY'); self.engine_path=self.find_engine(); self.session=TrackingSession(); self.tracker=None; self.ai_worker=None; self.stabilizer=Stabilizer(); self.threshold=AdaptiveThreshold(); self.baseline_frames=0; self.last_recovery=0.; self.recovery_attempts=0; self.recovery=False; self.recovery_in_progress=False; self.recovery_request_id=0; self.recovery_started=0.; self.verifying_started=0.; self.last_capture=0.; self.last_stable=0.; self.last_move=0.; self.pending_move=None; self.board_anchor=None; self.board_size=0; self.square_size=0.; self.restart_times=[]; self.restart_pending=False; self._closing=False
   self.setWindowTitle('Chess Vision Assistant V1.6'); self.resize(850,570); self.setWindowFlag(Qt.WindowStaysOnTopHint,True)
   root=QWidget(); self.setCentralWidget(root); outer=QVBoxLayout(root); header=QHBoxLayout(); title=QLabel('Chess Vision Assistant'); title.setObjectName('title'); gear=QPushButton('⚙'); gear.setFixedWidth(42); gear.clicked.connect(self.open_settings); header.addWidget(title); header.addStretch(); header.addWidget(gear); outer.addLayout(header)
   body=QHBoxLayout(); self.view=ChessBoardWidget(); body.addWidget(self.view,1); side=QVBoxLayout(); self.position=QLabel('POSITION\nReady'); self.playing=QLabel('Playing: White'); self.best=QLabel('BEST MOVE\n—'); self.evaluation=QLabel('Evaluation —'); self.alts=QLabel(''); self.scan_button=QPushButton('SCAN BOARD'); self.scan_button.clicked.connect(self.scan_board); side.addWidget(self.position); side.addWidget(self.playing); side.addSpacing(18); side.addWidget(self.best); side.addWidget(self.evaluation); side.addWidget(self.alts); side.addStretch(); side.addWidget(self.scan_button); body.addLayout(side); outer.addLayout(body,1); self.status=QLabel('Ready'); outer.addWidget(self.status)
@@ -59,6 +60,28 @@ class MainWindow(QMainWindow):
   old_state=self.session.tracking_state
   self.session.tracking_state=new_state
   if old_state!=new_state:logging.info('SYNC_STATE_CHANGED old_state=%s new_state=%s reason=%s',old_state,new_state,reason)
+ def set_board_geometry(self,rect,crop,reason):
+  old=self.region.copy() if self.region else None; changed=geometry_changed(old,rect); self.region=dict(rect); self.board_anchor=(rect['left'],rect['top']); self.board_size=rect['width']; self.square_size=rect['width']/8
+  if changed and old:
+   if old['width']!=rect['width']:logging.info('BOARD_RESIZED old_size=%d new_size=%d',old['width'],rect['width'])
+   logging.info('BOARD_REANCHORED old_rect=%s new_rect=%s',old,rect)
+  logging.info('CORRECTED_BOARD_RECT x=%d y=%d w=%d h=%d SQUARE_SIZE=%.2f',rect['left'],rect['top'],rect['width'],rect['height'],self.square_size)
+  if crop is not None:self.reset_baseline(crop); logging.info('GEOMETRY_BASELINE_RESET reason=%s',reason)
+ def save_openai_crop(self,crop):
+  if self.debug:
+   debug=LOG_DIRECTORY/'debug'; debug.mkdir(parents=True,exist_ok=True); cv2.imwrite(str(debug/'latest_openai_board.png'),crop)
+ def crop_is_valid(self,crop):
+  valid,reason=plausible_board_crop(crop)
+  logging.info('RECOVERY_CROP_%s size=%s reason=%s','VALIDATED' if valid else 'REJECTED',None if crop is None else f'{crop.shape[1]}x{crop.shape[0]}',reason)
+  return valid
+ def reanchor_board(self,reason):
+  if not self.region:return None
+  try:
+   search=search_region(self.region); image=ScreenCapture().grab(search); crop,rect,status=corrected_board(image,search)
+   if crop is None:logging.warning('BOARD_ALIGNMENT_SUSPECTED reason=%s detail=%s',reason,status); return None
+   self.set_board_geometry(rect,crop,reason); self.set_sync_state(SYNCED,'board geometry reanchored'); logging.info('BOARD_ALIGNMENT_OK rect=%s',rect); return crop
+  except Exception:
+   logging.exception('BOARD_ALIGNMENT_SUSPECTED reason=%s',reason); return None
  def find_engine(self):
   stored=self.settings.value('stockfish','')
   if stored and Path(stored).exists():return stored
@@ -84,25 +107,25 @@ class MainWindow(QMainWindow):
   self.selectors=[]
  def snip_cancelled(self): self.close_selectors(); self.show(); self.status.setText('Ready')
  def snip_selected(self,selection):
-  self.close_selectors(); rough=selection['physical']; self.logical_selection=selection['logical']; self.physical_selection=rough
+  self.close_selectors(); rough=selection['physical']; self.logical_selection=selection['logical']; self.physical_selection=rough; logging.info('RAW_SELECTION x=%d y=%d w=%d h=%d',rough['left'],rough['top'],rough['width'],rough['height'])
   try:
-   image=ScreenCapture().grab(rough); ratio=rough['width']/rough['height']; correction=not .90<=ratio<=1.10
-   if correction: crop,bounds=board_crop(image); x,y,w,h=bounds; self.region={'left':rough['left']+x,'top':rough['top']+y,'width':w,'height':h}
-   else: crop=image; self.region=dict(rough)
-   logging.info('BOARD_REGION_SELECTED x=%d y=%d width=%d height=%d crop_correction_applied=%s',self.region['left'],self.region['top'],self.region['width'],self.region['height'],correction)
+   image=ScreenCapture().grab(rough); crop,rect,status=corrected_board(image,rough)
+   if crop is None:raise ValueError(f'board calibration failed: {status}')
+   self.set_board_geometry(rect,crop,'initial calibration'); logging.info('BOARD_REGION_SELECTED x=%d y=%d width=%d height=%d',self.region['left'],self.region['top'],self.region['width'],self.region['height'])
    if self.debug:
     Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/post_selection_capture.png',image); cv2.imwrite('debug/selected_frozen.png',selection['frozen_image'])
     same=image.shape==selection['frozen_image'].shape and np.array_equal(image,selection['frozen_image']); logging.debug('Frozen selection versus post-selection capture exact_pixel_match=%s frozen_shape=%s post_shape=%s',same,selection['frozen_image'].shape,image.shape)
-   self.show(); self.raise_(); self.status.setText('Scanning...'); self.position.setText('POSITION\nScanning...'); self.start_ai(crop,False)
+   self.save_openai_crop(crop); self.show(); self.raise_(); self.status.setText('Scanning...'); self.position.setText('POSITION\nScanning...'); self.start_ai(crop,False)
   except Exception: logging.exception('board crop failed'); self.show(); self.user_error('Could not capture the selected board.')
- def start_ai(self,crop,recovery):
+ def start_ai(self,crop,recovery,request_id=None):
+  if recovery and not self.crop_is_valid(crop):self.ai_failed(self.tracking_session_id,self.board_version,'bad recovery crop',request_id); return
   if self.ai_worker and self.ai_worker.isRunning():return
   if not self.openai_client.ready():
    if recovery:self.recovery=True; self.ai_failed(self.tracking_session_id,self.board_version,'OpenAI is not configured'); return
    self.user_error('OpenAI is not configured. Add the API key to .env.'); return
   self.recovery=recovery
-  if recovery:self.set_sync_state(RECOVERING,'local reconciliation failed'); self.recovery_started=time.monotonic(); self.session.ai_recoveries+=1; self.status.setText('● Resynchronizing...'); self.position.setText('POSITION\n● Resynchronizing...'); logging.info('OPENAI_RECOVERY_STARTED')
-  session=self.tracking_session_id; version=self.board_version; self.ai_worker=RecognitionWorker(crop,self.model,self.debug,self.openai_client); self.ai_worker.result.connect(lambda b,r,l:self.ai_done(session,version,recovery,b,r,l,crop)); self.ai_worker.error.connect(lambda error:self.ai_failed(session,version,error)); self.ai_worker.start()
+  if recovery:self.set_sync_state(RECOVERING,'local reconciliation failed'); self.recovery_started=time.monotonic(); self.session.ai_recoveries+=1; self.status.setText('● Resynchronizing...'); self.position.setText('POSITION\n● Resynchronizing...'); logging.info('OPENAI_RECOVERY_STARTED request_id=%d',request_id)
+  self.save_openai_crop(crop); session=self.tracking_session_id; version=self.board_version; self.ai_worker=RecognitionWorker(crop,self.model,self.debug,self.openai_client); self.ai_worker.result.connect(lambda b,r,l:self.ai_done(session,version,recovery,b,r,l,crop,request_id)); self.ai_worker.error.connect(lambda error:self.ai_failed(session,version,error,request_id)); self.ai_worker.start()
  def ask_color(self,title,text,white_label='WHITE',black_label='BLACK'):
   dialog=QMessageBox(self); dialog.setWindowTitle(title); dialog.setText(text); dialog.setWindowFlag(Qt.WindowCloseButtonHint,False); white=dialog.addButton(white_label,QMessageBox.AcceptRole); black=dialog.addButton(black_label,QMessageBox.RejectRole)
   while True:
@@ -116,8 +139,8 @@ class MainWindow(QMainWindow):
  def is_starting_position(self,board):return board.board_fen()==chess.STARTING_BOARD_FEN
  def select_player(self,color):
   self.session.select_player(color); self.view.set_orientation(self.session.app_display_orientation); self.playing.setText('Playing: '+('White' if color else 'Black')); logging.info('PLAYER_COLOR_SELECTED color=%s','white' if color else 'black')
- def ai_done(self,session,version,recovery,board,result,latency,crop):
-  if session!=self.tracking_session_id or version!=self.board_version:return
+ def ai_done(self,session,version,recovery,board,result,latency,crop,request_id=None):
+  if session!=self.tracking_session_id or version!=self.board_version or (recovery and (not self.recovery_in_progress or request_id!=self.recovery_request_id)):return
   if recovery and not board.is_valid():logging.error('Discarded invalid staged AI recovery board fen=%s',board.fen()); self.ai_failed(session,version,'invalid reconstructed board'); return
   if not recovery:
    self.session.browser_orientation=Orientation.WHITE_BOTTOM if result.orientation=='unknown' else Orientation(result.orientation)
@@ -130,12 +153,12 @@ class MainWindow(QMainWindow):
     logging.info('OPENAI_RECOVERY_ACCEPTED plies=%d',len(recovered_moves))
    else:
     board.turn=self.ask_my_turn(); logging.warning('OPENAI_RECOVERY_ACCEPTED full_resync=true')
-  self.board=board; self.board_version+=1; self.reset_baseline(crop); self.set_sync_state(SYNCED,'OpenAI scan accepted'); self.pending_move=None; self.view.set_orientation(self.session.app_display_orientation); self.view.set_board(self.board); logging.info('OPENAI_RECOVERY_RESULT recovery=%s latency_seconds=%.3f board_turn=%s',recovery,latency,'white' if self.board.turn else 'black'); self.status.setText('● Synced'); self.position.setText('POSITION\n● Synced'); self.scan_button.setText('RESCAN'); self.recovery_attempts=0; self.start_tracking(); self.analyze()
- def ai_failed(self,session,version,technical):
-  if session!=self.tracking_session_id or version!=self.board_version:return
+  self.board=board; self.board_version+=1; self.reset_baseline(crop); self.recovery_in_progress=False; self.set_sync_state(SYNCED,'OpenAI scan accepted'); self.pending_move=None; self.view.set_orientation(self.session.app_display_orientation); self.view.set_board(self.board); logging.info('OPENAI_RECOVERY_RESULT recovery=%s latency_seconds=%.3f board_turn=%s',recovery,latency,'white' if self.board.turn else 'black'); self.status.setText('● Synced'); self.position.setText('POSITION\n● Synced'); self.scan_button.setText('RESCAN'); self.recovery_attempts=0; self.start_tracking(); self.analyze()
+ def ai_failed(self,session,version,technical,request_id=None):
+  if session!=self.tracking_session_id or version!=self.board_version or (self.recovery and request_id is not None and request_id!=self.recovery_request_id):return
   logging.error('AI recognition failed: %s',technical)
   if self.recovery:
-   self.session.failed_ai_recoveries+=1; self.pending_move=None; self.stabilizer.reset(); logging.warning('OPENAI_RECOVERY_FAILED reason=%s failures=%d',technical,self.session.failed_ai_recoveries)
+   self.recovery_in_progress=False; self.session.failed_ai_recoveries+=1; self.pending_move=None; self.stabilizer.reset(); logging.warning('OPENAI_RECOVERY_FAILED reason=%s failures=%d',technical,self.session.failed_ai_recoveries)
    if self.recovery_attempts>=2:self.tracking_lost()
    else:self.set_sync_state(VERIFYING,'OpenAI recovery failed'); self.status.setText('● Awaiting stable board')
    return
@@ -163,6 +186,10 @@ class MainWindow(QMainWindow):
   signals=score_squares(self.previous,crop,self.session.browser_orientation); numeric={sq:value['combined'] for sq,value in signals.items()}; threshold=self.threshold.value; observed={sq for sq,value in numeric.items() if value>=threshold}
   if self.baseline_frames>0 and (not numeric or max(numeric.values())<threshold):self.threshold.sample(signals); self.baseline_frames-=1; threshold=self.threshold.value
   if not observed:self.stabilizer.observe(crop,False); self.set_sync_state(SYNCED,'no square-level change'); self.pending_move=None; return
+  if len(observed)>12:
+   logging.warning('BOARD_ALIGNMENT_SUSPECTED changed_count=%d',len(observed)); aligned=self.reanchor_board('massive changed-square event')
+   if aligned is not None:self.set_sync_state(SYNCED,'geometry baseline reset'); return
+   self.recover(crop); return
   self.set_sync_state(VERIFYING,'changed squares awaiting stabilization'); self.status.setText('● Verifying board')
   if not self.stabilizer.observe(crop,True):return
   if self.debug:Path('debug').mkdir(exist_ok=True); cv2.imwrite('debug/current_stable_frame.png',crop)
@@ -202,9 +229,19 @@ class MainWindow(QMainWindow):
   logging.warning('Local recovery failed; escalating to AI fallback'); self.recover(crop)
  def recover(self,crop):
   now=time.monotonic()
-  if self.session.tracking_state==RECOVERING:return
+  if self.recovery_in_progress or (self.ai_worker and self.ai_worker.isRunning()):return
   if self.recovery_attempts>=2:self.tracking_lost(); return
-  self.last_recovery=now; self.recovery_attempts+=1; self.start_ai(crop,True)
+  self.last_recovery=now; self.recovery_attempts+=1; self.recovery=True; self.recovery_in_progress=True; self.recovery_request_id+=1; request_id=self.recovery_request_id; self.set_sync_state(RECOVERING,'local reconciliation failed'); self.hide(); QTimer.singleShot(150,lambda:self.capture_recovery_board(request_id))
+ def capture_recovery_board(self,request_id):
+  if not self.recovery_in_progress or request_id!=self.recovery_request_id:return
+  try:
+   old_rect=self.region.copy() if self.region else None; crop=self.reanchor_board('pre-recovery capture'); geometry_changed_now=geometry_changed(old_rect,self.region) if old_rect else False
+   self.show(); self.raise_()
+   if crop is None:self.ai_failed(self.tracking_session_id,self.board_version,'bad recovery crop after re-anchor',request_id); return
+   if geometry_changed_now:self.recovery_in_progress=False; self.set_sync_state(SYNCED,'geometry correction before recovery'); return
+   self.start_ai(crop,True,request_id)
+  except Exception:
+   self.show(); self.raise_(); logging.exception('WORKER_ERROR worker=recovery_capture'); self.ai_failed(self.tracking_session_id,self.board_version,'recovery capture failed',request_id)
  def tracking_lost(self,reason='recovery attempts exhausted'): self.set_sync_state(LOST,reason); logging.error('TRACKING_LOST reason=%s',reason); self.stop_tracking(); self.position.setText('POSITION\n● Tracking lost'); self.status.setText('● Tracking lost'); self.scan_button.setText('RESCAN')
  def tracker_heartbeat(self,session,stamp):
   if session==self.tracking_session_id:self.last_capture=stamp
@@ -225,7 +262,8 @@ class MainWindow(QMainWindow):
   if self._closing or not self.region or not self.tracker:return
   now=time.monotonic()
   if self.session.tracking_state==VERIFYING and self.verifying_started and now-self.verifying_started>1: self.recover(self.session.latest_frame if self.session.latest_frame is not None else self.previous); return
-  if self.session.tracking_state==RECOVERING and self.recovery_started and now-self.recovery_started>8: self.ai_failed(self.tracking_session_id,self.board_version,'OpenAI recovery timed out'); return
+  if self.recovery_in_progress and self.session.tracking_state==RECOVERING and self.recovery_started and now-self.recovery_started>20:
+   request_id=self.recovery_request_id; self.recovery_in_progress=False; logging.error('OPENAI_RECOVERY_TIMEOUT request_id=%d timeout_seconds=20',request_id); self.ai_failed(self.tracking_session_id,self.board_version,'OpenAI recovery timed out',request_id); return
   if not self.tracker.isRunning() or time.monotonic()-self.last_capture>2:self.schedule_tracker_restart()
  def start_engine(self):
   if self.engine_worker:self.engine_worker.stop()
