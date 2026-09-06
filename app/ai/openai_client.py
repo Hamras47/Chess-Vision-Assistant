@@ -19,7 +19,7 @@ class OpenAIClient:
   if not self.ready(): raise AIError('OpenAI API key missing. Add OPENAI_API_KEY to .env and restart.')
   if self._client is None:
    try:
-    from openai import OpenAI; self._client=OpenAI(timeout=30,max_retries=2)
+    from openai import OpenAI; self._client=OpenAI(timeout=20,max_retries=2)
    except Exception as e: raise AIError(f'OpenAI SDK unavailable: {e}')
   return self._client
  def recognize(self,png,schema,prompt):
