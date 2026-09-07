@@ -21,4 +21,4 @@ Add `OPENAI_API_KEY` to `.env` to enable Scan Board. The configured OpenAI model
 4. Review Stockfish's top move, two alternatives, evaluation, arrow, and SAN history.
 5. Use Undo/Redo for corrections, Rescan for a fresh import, or New Game for the starting position.
 
-Imported midgame positions conservatively use no castling or en-passant rights. A recognized exact starting layout receives normal starting-position castling rights.
+Imported midgame positions default to no castling or en-passant rights. During confirmation, the user may explicitly enable castling rights only where the king and matching rook occupy their starting squares. A recognized exact starting layout receives normal starting-position castling rights automatically.

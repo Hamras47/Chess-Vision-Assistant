@@ -5,6 +5,44 @@ from dataclasses import dataclass
 
 import chess
 
+WHITE_KINGSIDE = "white_kingside"
+WHITE_QUEENSIDE = "white_queenside"
+BLACK_KINGSIDE = "black_kingside"
+BLACK_QUEENSIDE = "black_queenside"
+
+CASTLING_REQUIREMENTS = {
+    WHITE_KINGSIDE: (chess.E1, chess.H1, chess.WHITE),
+    WHITE_QUEENSIDE: (chess.E1, chess.A1, chess.WHITE),
+    BLACK_KINGSIDE: (chess.E8, chess.H8, chess.BLACK),
+    BLACK_QUEENSIDE: (chess.E8, chess.A8, chess.BLACK),
+}
+
+
+def is_new_game_placement(board: chess.Board) -> bool:
+    """A scan is a new game only when all 64 squares match the initial layout."""
+    return board.board_fen() == chess.STARTING_BOARD_FEN
+
+
+def available_castling_options(board: chess.Board) -> tuple[str, ...]:
+    """Return rights that are physically possible, without assuming history."""
+    available = []
+    for option, (king_square, rook_square, color) in CASTLING_REQUIREMENTS.items():
+        if (
+            board.piece_at(king_square) == chess.Piece(chess.KING, color)
+            and board.piece_at(rook_square) == chess.Piece(chess.ROOK, color)
+        ):
+            available.append(option)
+    return tuple(available)
+
+
+def apply_castling_rights(board: chess.Board, selected: set[str] | tuple[str, ...]) -> None:
+    """Apply only selected rights whose king and rook still occupy home squares."""
+    possible = set(available_castling_options(board))
+    board.castling_rights = chess.BB_EMPTY
+    for option in set(selected) & possible:
+        rook_square = CASTLING_REQUIREMENTS[option][1]
+        board.castling_rights |= chess.BB_SQUARES[rook_square]
+
 
 @dataclass(frozen=True)
 class MoveRecord:

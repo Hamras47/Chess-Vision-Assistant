@@ -14,7 +14,13 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMainWindow, QM
 from app.ai.board_recognizer import RecognitionWorker
 from app.ai.openai_client import OpenAIClient, resolve_model
 from app.chess.coordinates import Orientation
-from app.chess.game_state import ManualGameState, turn_from_selection
+from app.chess.game_state import (
+    ManualGameState,
+    apply_castling_rights,
+    available_castling_options,
+    is_new_game_placement,
+    turn_from_selection,
+)
 from app.core.logging_setup import LOG_DIRECTORY, configure, install_exception_hook
 from app.engine.stockfish import EngineWorker
 from app.ui.analysis_panel import AnalysisPanel
@@ -58,6 +64,10 @@ QDialog { background: #181d1e; }
 QLineEdit, QComboBox { background: #222829; border: 1px solid #3a4542; border-radius: 7px; padding: 7px; }
 QLabel#apiLoaded { color: #85c6a5; }
 QLabel#apiMissing { color: #e3ad69; }
+QLabel#dialogTitle { font-size: 19px; font-weight: 600; padding-bottom: 4px; }
+QCheckBox { spacing: 7px; color: #d6ded9; padding: 3px 2px; }
+QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #61706a; border-radius: 4px; background: #202625; }
+QCheckBox::indicator:checked { background: #568a73; border-color: #79aa94; }
 """
 
 
@@ -223,11 +233,12 @@ class MainWindow(QMainWindow):
         self.panel.set_history(self.game.history_text())
         self.panel.set_undo_redo(self.game.can_undo, self.game.can_redo)
 
-    def load_position(self, board, player_color, side_to_move, imported=True):
-        loaded = chess.Board() if board.board_fen() == chess.STARTING_BOARD_FEN else board.copy(stack=False)
+    def load_position(self, board, player_color, side_to_move, imported=True, castling_rights=()):
+        new_game = is_new_game_placement(board)
+        loaded = chess.Board() if new_game else board.copy(stack=False)
         loaded.turn = side_to_move
-        if loaded.board_fen() != chess.STARTING_BOARD_FEN:
-            loaded.castling_rights = chess.BB_EMPTY
+        if not new_game:
+            apply_castling_rights(loaded, castling_rights)
             loaded.ep_square = None
         self.game.load(loaded, player_color)
         self.has_imported_position = imported
@@ -286,7 +297,7 @@ class MainWindow(QMainWindow):
         values = PositionSetupDialog.get_values(self, ask_turn=False, initial_color=self.player_color)
         if values is None:
             return
-        player_color, _ = values
+        player_color, _, _ = values
         self.load_position(chess.Board(), player_color, chess.WHITE, imported=False)
         self.status.setText("New game ready")
 
@@ -379,16 +390,29 @@ class MainWindow(QMainWindow):
         if token != self.scan_token:
             return
         logging.info("OPENAI_SCAN_SUCCESS token=%d confidence=%.3f latency=%.3f", token, result.confidence, latency)
-        values = PositionSetupDialog.get_values(self, ask_turn=True, initial_color=self.player_color)
+        new_game = is_new_game_placement(board)
+        castling_options = None if new_game else available_castling_options(board)
+        values = PositionSetupDialog.get_values(
+            self,
+            ask_turn=True,
+            initial_color=self.player_color,
+            castling_options=castling_options,
+        )
         if values is None:
             self._update_position()
             self.status.setText("Scan cancelled")
             return
-        player_color, my_turn = values
+        player_color, my_turn, castling_rights = values
         board.turn = turn_from_selection(player_color, my_turn)
         logging.info("PLAYER_COLOR_SELECTED color=%s", "white" if player_color else "black")
         logging.info("TURN_SELECTED turn=%s", "white" if board.turn else "black")
-        self.load_position(board, player_color, board.turn, imported=True)
+        self.load_position(
+            board,
+            player_color,
+            board.turn,
+            imported=True,
+            castling_rights=castling_rights,
+        )
         self.status.setText("Position imported")
 
     def scan_failed(self, token, error):
