@@ -1,25 +1,24 @@
 # Chess Vision Assistant V1.6
 
-V1.6 is a deliberately small, no-ML desktop assistant. Luna performs the initial 64-square board read and rare recovery only. Normal live play uses rapid local screen differences, python-chess legal-move matching, and Stockfish.
+V1.6 is a manual chess analysis board with one-time OpenAI position import. The internal `python-chess` board is authoritative: the user enters moves for both sides, legality is enforced locally, and Stockfish analyzes whichever side is to move.
 
-The default vision model is exactly `gpt-5.6-luna`. Settings override `OPENAI_VISION_MODEL`, which overrides that default. The selected model is passed to the OpenAI Responses API unchanged.
+There is no live browser monitoring, automatic move detection, background capture, recovery state machine, or ML runtime.
 
 ## Install and run
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-copy .env.example .env
-# Add OPENAI_API_KEY to .env and optionally configure Stockfish in Settings.
+python -m pip install -e ".[dev]"
 python -m app.main
 ```
 
-Use **Scan Board**, select the browser board, then choose your colour and whether it is your turn. Your selected colour controls the internal-board orientation. Canonical square names always remain standard chess coordinates.
+Add `OPENAI_API_KEY` to `.env` to enable Scan Board. The configured OpenAI model takes precedence, then `OPENAI_VISION_MODEL`, then the default `gpt-5.6-luna`. Configure a Stockfish executable in Settings to enable asynchronous MultiPV analysis.
 
-## Tracking and recovery
+## Workflow
 
-The capture loop runs at 125 ms by default. A stable visual change is matched against legal moves; commits are atomic and reset the visual baseline. OpenAI recovery starts only after a persistent stable board change cannot be resolved locally. Recovery accepts an identical board, a unique 1/2-ply legal sequence, or a structurally valid high-confidence full resync.
+1. Start from the normal initial board or click **Scan Board**.
+2. For a scan, select the board once and confirm player color and whose turn it is.
+3. Click-click or drag-drop a legal move for the side to move.
+4. Review Stockfish's top move, two alternatives, evaluation, arrow, and SAN history.
+5. Use Undo/Redo for corrections, Rescan for a fresh import, or New Game for the starting position.
 
-There are no Torch, ONNX, MobileNet, scikit-learn, model files, or square classifiers in the V1.6 runtime.
+Imported midgame positions conservatively use no castling or en-passant rights. A recognized exact starting layout receives normal starting-position castling rights.
