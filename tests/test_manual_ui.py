@@ -91,6 +91,80 @@ def test_main_window_smoke_responsive_and_pieces_render(monkeypatch, app):
     window.close()
 
 
+@pytest.mark.parametrize(
+    "width,height,expected_mode",
+    [
+        (1920, 1080, "wide"),
+        (1200, 900, "wide"),
+        (960, 1000, "wide"),
+        (900, 900, "compact"),
+        (800, 900, "compact"),
+        (700, 800, "compact"),
+        (600, 700, "compact"),
+    ],
+)
+def test_real_window_resizes_and_reflows_without_clipping(monkeypatch, app, width, height, expected_mode):
+    window = make_window(monkeypatch, app)
+    window.resize(width, height)
+    app.processEvents()
+    assert (window.width(), window.height()) == (width, height)
+    assert window.layout_mode == expected_mode
+    assert window.view.width() == window.view.height()
+    assert window.view.geometry().intersected(window.board_host.rect()) == window.view.geometry()
+    assert window.view.width() >= 460
+    for control in (window.panel.best_button, window.panel.evaluation_label, window.panel.scan_button, window.panel.new_button):
+        assert control.isVisible()
+        top_left = control.mapTo(window, QPoint(0, 0))
+        assert 0 <= top_left.x() < window.width()
+        assert 0 <= top_left.y() < window.height()
+        assert top_left.x() + control.width() <= window.width()
+        assert top_left.y() + control.height() <= window.height()
+    if expected_mode == "wide":
+        assert window.panel.width() <= 220
+        assert window.panel.x() > window.board_host.x()
+    else:
+        assert window.panel.y() > window.board_host.y()
+        assert window.panel.width() == window.body.geometry().width()
+    window.close()
+
+
+def test_resizing_back_to_large_restores_wide_layout(monkeypatch, app):
+    window = make_window(monkeypatch, app)
+    window.resize(700, 800)
+    app.processEvents()
+    assert window.layout_mode == "compact"
+    window.resize(960, 1000)
+    app.processEvents()
+    assert window.layout_mode == "wide"
+    assert window.panel.width() <= 220
+    window.close()
+
+
+def test_minimum_size_and_visible_ui_are_minimal(monkeypatch, app):
+    window = make_window(monkeypatch, app)
+    assert (window.minimumWidth(), window.minimumHeight()) == (560, 560)
+    assert window.view.minimumWidth() <= 180
+    assert window.panel.minimumWidth() <= 180
+    assert not window.testAttribute(Qt.WA_TranslucentBackground)
+    assert not window.windowFlags() & Qt.FramelessWindowHint
+    visible_text = {label.text() for label in window.panel.findChildren(type(window.panel.turn_label))}
+    assert "ALTERNATIVES" not in visible_text
+    assert "MOVE HISTORY" not in visible_text
+    assert not hasattr(window.panel, "undo_button")
+    assert not hasattr(window.panel, "redo_button")
+    window.close()
+
+
+def test_piece_assets_use_one_consistent_palette():
+    root = Path(__file__).parents[1] / "assets" / "pieces"
+    for path in root.glob("black_*.svg"):
+        source = path.read_text(encoding="utf-8").lower()
+        assert "#24292f" in source, path.name
+    for path in root.glob("white_*.svg"):
+        source = path.read_text(encoding="utf-8").lower()
+        assert "#f5f0e6" in source, path.name
+
+
 def test_white_piece_on_light_and_black_piece_on_dark_have_contrast(app):
     widget = ChessBoardWidget()
     widget.resize(640, 640)
@@ -131,7 +205,8 @@ def test_manual_moves_both_sides_trigger_analysis(monkeypatch, app):
     assert window.commit_manual_move(chess.E2, chess.E4)
     assert window.commit_manual_move(chess.E7, chess.E5)
     assert calls == [chess.BLACK, chess.WHITE]
-    assert window.panel.history_label.text() == "1. e4    e5"
+    assert window.game.history_text() == "1. e4    e5"
+    assert not hasattr(window.panel, "history_label")
     window.close()
 
 

@@ -44,7 +44,7 @@ class ChessBoardWidget(QWidget):
         self._animated_move: chess.Move | None = None
         self._animated_piece: chess.Piece | None = None
         self._animation_progress = 1.0
-        self.setMinimumSize(480, 480)
+        self.setMinimumSize(180, 180)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
 
@@ -263,7 +263,7 @@ class ChessBoardWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         ox, oy, size = self._layout()
-        light, dark = QColor("#d8d4c5"), QColor("#6f8874")
+        light, dark = QColor(216, 212, 197, 242), QColor(111, 136, 116, 242)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(0, 0, 0, 75))
         painter.drawRoundedRect(QRectF(ox - 4, oy - 4, size * 8 + 8, size * 8 + 8), 8, 8)
@@ -326,3 +326,21 @@ class ChessBoardWidget(QWidget):
                     QRectF(self._drag_position.x() - size / 2, self._drag_position.y() - size / 2, size, size),
                     size,
                 )
+
+
+class SquareBoardHost(QWidget):
+    """Keep the actual board widget square and centered at every host size."""
+
+    def __init__(self, board: ChessBoardWidget, parent=None):
+        super().__init__(parent)
+        self.board = board
+        self.board.setParent(self)
+        self.setMinimumSize(180, 180)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def resizeEvent(self, event):
+        side = max(0, min(self.width(), self.height()))
+        left = (self.width() - side) // 2
+        top = (self.height() - side) // 2
+        self.board.setGeometry(left, top, side, side)
+        super().resizeEvent(event)

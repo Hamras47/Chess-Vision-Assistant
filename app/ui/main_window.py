@@ -9,7 +9,7 @@ from pathlib import Path
 import chess
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QBoxLayout, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from app.ai.board_recognizer import RecognitionWorker
 from app.ai.openai_client import OpenAIClient, resolve_model
@@ -24,7 +24,7 @@ from app.chess.game_state import (
 from app.core.logging_setup import LOG_DIRECTORY, configure, install_exception_hook
 from app.engine.stockfish import EngineWorker
 from app.ui.analysis_panel import AnalysisPanel
-from app.ui.board_widget import ChessBoardWidget
+from app.ui.board_widget import ChessBoardWidget, SquareBoardHost
 from app.ui.dpi_coordinates import match_monitor
 from app.ui.promotion_dialog import PromotionDialog
 from app.ui.region_selector import RegionSelector
@@ -35,27 +35,24 @@ from app.vision.capture import ScreenCapture, square_crop
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 STYLE = """
-QMainWindow, QWidget#root { background: #101416; color: #eef2ef; }
+QMainWindow { background: #101416; }
+QWidget#root { background: rgba(16,20,22,232); color: #eef2ef; }
 QWidget { color: #e9eeeb; font-family: "Segoe UI"; font-size: 14px; }
 QLabel#appTitle { font-size: 21px; font-weight: 600; color: #f4f6f4; }
 QLabel#appSubtitle, QLabel#muted { color: #98a39e; }
-QLabel#positionOwner { font-size: 18px; font-weight: 600; }
+QLabel#playing { font-size: 15px; font-weight: 600; }
 QLabel#stateLabel { color: #e7bd65; font-weight: 600; }
 QLabel#eyebrow, QLabel#dialogEyebrow { color: #91a099; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
 QLabel#moveCoordinates { color: #a8b4ae; font-size: 14px; }
 QLabel#evaluation { color: #cbd4cf; font-size: 16px; }
-QLabel#alternative { background: rgba(255,255,255,0.035); border-radius: 7px; padding: 7px 10px; }
-QLabel#history { background: transparent; padding: 3px; color: #cbd3cf; }
-QFrame#analysisCard { background: rgba(26,31,32,0.94); border: 1px solid rgba(255,255,255,0.09); border-radius: 13px; }
-QScrollArea#historyScroll { border: none; background: rgba(7,10,11,0.25); border-radius: 8px; }
-QScrollArea#historyScroll > QWidget > QWidget { background: transparent; }
+QFrame#analysisCard { background: rgba(26,31,32,210); border: 1px solid rgba(255,255,255,0.09); border-radius: 11px; }
 QPushButton { background: #2a3131; color: #edf2ef; border: 1px solid #3b4542; border-radius: 8px; padding: 8px 12px; }
 QPushButton:hover { background: #343e3b; border-color: #52605b; }
 QPushButton:pressed { background: #202625; }
 QPushButton:disabled { color: #68736e; background: #202524; border-color: #2b3230; }
 QPushButton#primaryButton { background: #3f745f; border-color: #568a73; font-weight: 600; }
 QPushButton#primaryButton:hover { background: #4a836c; }
-QPushButton#bestMove { background: transparent; border: none; padding: 0; text-align: left; font-size: 31px; font-weight: 650; color: #f4f6f4; }
+QPushButton#bestMove { background: transparent; border: none; padding: 0; text-align: left; font-size: 29px; font-weight: 650; color: #f4f6f4; }
 QPushButton#bestMove:hover { color: #a9d2bd; }
 QPushButton#utilityButton { padding: 7px 12px; color: #b8c2bd; }
 QPushButton#choiceButton { min-width: 125px; padding: 13px; }
@@ -64,6 +61,7 @@ QDialog { background: #181d1e; }
 QLineEdit, QComboBox { background: #222829; border: 1px solid #3a4542; border-radius: 7px; padding: 7px; }
 QLabel#apiLoaded { color: #85c6a5; }
 QLabel#apiMissing { color: #e3ad69; }
+QLabel#transientStatus { background: rgba(26,31,32,205); border: 1px solid rgba(255,255,255,0.08); border-radius: 7px; padding: 4px 9px; color: #b9c5bf; }
 QLabel#dialogTitle { font-size: 19px; font-weight: 600; padding-bottom: 4px; }
 QCheckBox { spacing: 7px; color: #d6ded9; padding: 3px 2px; }
 QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #61706a; border-radius: 4px; background: #202625; }
@@ -71,7 +69,36 @@ QCheckBox::indicator:checked { background: #568a73; border-color: #79aa94; }
 """
 
 
+class TransientStatusLabel(QLabel):
+    """Small operational feedback strip that disappears when no longer useful."""
+
+    PERSISTENT_PREFIXES = ("Select", "Reading", "Analyzing", "Finishing")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("transientStatus")
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
+        self.hide()
+
+    def setText(self, text):
+        super().setText(text)
+        if not text:
+            self.hide()
+            return
+        self.show()
+        if str(text).startswith(self.PERSISTENT_PREFIXES):
+            self._hide_timer.stop()
+        else:
+            self._hide_timer.start(3500)
+
+
 class MainWindow(QMainWindow):
+    WIDE_PANEL_WIDTH = 205
+    MIN_WIDE_BOARD = 690
+    REFLOW_HYSTERESIS = 20
+
     def __init__(self):
         super().__init__()
         self.settings = QSettings("ChessVisionAssistant", "V16")
@@ -90,14 +117,16 @@ class MainWindow(QMainWindow):
         self.analysis_token = 0
         self.has_imported_position = False
         self._closing = False
+        self.layout_mode = "wide"
         logging.info("APP_START")
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=%s", self.model, "settings" if stored_model else "environment_or_default")
         self.setWindowTitle("Chess Vision Assistant V1.6")
         self.resize(1150, 800)
-        self.setMinimumSize(900, 650)
+        self.setMinimumSize(560, 560)
         self._build_ui()
         self.setStyleSheet(STYLE)
         self._install_shortcuts()
+        self._apply_responsive_layout(force=True)
         self.view.set_board(self.game.board)
         self._update_position(ready=True)
         if self.engine_path:
@@ -120,17 +149,14 @@ class MainWindow(QMainWindow):
         root.setObjectName("root")
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(24, 18, 24, 18)
-        outer.setSpacing(14)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(8)
         header = QHBoxLayout()
         title_group = QVBoxLayout()
         title_group.setSpacing(0)
         title = QLabel("Chess Vision")
         title.setObjectName("appTitle")
-        subtitle = QLabel("Manual analysis board")
-        subtitle.setObjectName("appSubtitle")
         title_group.addWidget(title)
-        title_group.addWidget(subtitle)
         header.addLayout(title_group)
         header.addStretch()
         flip = QPushButton("Flip")
@@ -144,26 +170,42 @@ class MainWindow(QMainWindow):
         header.addWidget(flip)
         header.addWidget(settings)
         outer.addLayout(header)
-        body = QHBoxLayout()
-        body.setSpacing(22)
-        board_host = QWidget()
-        board_layout = QVBoxLayout(board_host)
-        board_layout.setContentsMargins(0, 0, 0, 0)
+        self.body = QBoxLayout(QBoxLayout.LeftToRight)
+        self.body.setSpacing(10)
         self.view = ChessBoardWidget()
         self.view.move_requested.connect(self.commit_manual_move)
-        board_layout.addWidget(self.view, 1)
-        body.addWidget(board_host, 1)
+        self.board_host = SquareBoardHost(self.view)
+        self.body.addWidget(self.board_host, 1)
         self.panel = AnalysisPanel()
         self.panel.undo_requested.connect(self.undo)
         self.panel.redo_requested.connect(self.redo)
         self.panel.scan_requested.connect(self.scan_board)
         self.panel.new_game_requested.connect(self.new_game)
         self.panel.best_move_clicked.connect(self.pulse_best_move)
-        body.addWidget(self.panel)
-        outer.addLayout(body, 1)
-        self.status = QLabel("Ready")
-        self.status.setObjectName("muted")
+        self.body.addWidget(self.panel)
+        self.body.setAlignment(self.panel, Qt.AlignTop)
+        outer.addLayout(self.body, 1)
+        self.status = TransientStatusLabel()
         outer.addWidget(self.status)
+
+    def _apply_responsive_layout(self, force=False):
+        margins = self.centralWidget().layout().contentsMargins()
+        usable_width = self.centralWidget().width() - margins.left() - margins.right()
+        wide_board_width = usable_width - self.panel.wide_width_hint() - self.body.spacing()
+        threshold = self.MIN_WIDE_BOARD + (
+            self.REFLOW_HYSTERESIS if self.layout_mode == "compact" else -self.REFLOW_HYSTERESIS
+        )
+        compact = wide_board_width < threshold
+        mode = "compact" if compact else "wide"
+        if not force and mode == self.layout_mode:
+            return
+        self.layout_mode = mode
+        self.body.setDirection(QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight)
+        self.panel.set_compact(compact)
+
+    def resizeEvent(self, event):
+        self._apply_responsive_layout()
+        super().resizeEvent(event)
 
     def _install_shortcuts(self):
         for sequence, callback in (("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+R", self.scan_board), ("Ctrl+N", self.new_game), ("F", self.flip_board), ("Escape", self.view.clear_selection)):
@@ -229,6 +271,7 @@ class MainWindow(QMainWindow):
 
     def _update_position(self, ready=False):
         owner, turn = self.game.turn_labels()
+        self.panel.set_player(self.game.player_color)
         self.panel.set_position("Ready" if ready else owner, turn, self.game.outcome_status())
         self.panel.set_history(self.game.history_text())
         self.panel.set_undo_redo(self.game.can_undo, self.game.can_redo)

@@ -1,20 +1,13 @@
-"""Compact right-hand analysis panel."""
+"""Minimal, reflowing analysis companion."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QFrame,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QScrollArea,
-    QVBoxLayout,
-    QWidget,
-)
+import chess
+from PySide6.QtCore import QSize, Signal
+from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QPushButton, QSizePolicy
 
 
 class AnalysisPanel(QFrame):
+    # Undo/redo remain keyboard-only; signals preserve the existing behavior API.
     undo_requested = Signal()
     redo_requested = Signal()
     scan_requested = Signal()
@@ -24,25 +17,18 @@ class AnalysisPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("analysisCard")
-        self.setMinimumWidth(280)
-        self.setMaximumWidth(320)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 22, 22, 20)
-        layout.setSpacing(8)
-
-        layout.addWidget(self._eyebrow("POSITION"))
-        self.owner_label = QLabel("Ready")
-        self.owner_label.setObjectName("positionOwner")
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self._compact = False
+        self.playing_label = QLabel("Playing: White")
+        self.playing_label.setObjectName("playing")
         self.turn_label = QLabel("White to move")
         self.turn_label.setObjectName("muted")
+        self.turn_label.setWordWrap(True)
         self.state_label = QLabel("")
         self.state_label.setObjectName("stateLabel")
-        layout.addWidget(self.owner_label)
-        layout.addWidget(self.turn_label)
-        layout.addWidget(self.state_label)
-
-        layout.addSpacing(16)
-        layout.addWidget(self._eyebrow("BEST MOVE"))
+        self.state_label.setWordWrap(True)
+        self.best_heading = QLabel("BEST MOVE")
+        self.best_heading.setObjectName("eyebrow")
         self.best_button = QPushButton("—")
         self.best_button.setObjectName("bestMove")
         self.best_button.setEnabled(False)
@@ -51,52 +37,10 @@ class AnalysisPanel(QFrame):
         self.uci_label.setObjectName("moveCoordinates")
         self.evaluation_label = QLabel("Evaluation —")
         self.evaluation_label.setObjectName("evaluation")
-        layout.addWidget(self.best_button)
-        layout.addWidget(self.uci_label)
-        layout.addWidget(self.evaluation_label)
-
-        layout.addSpacing(14)
-        layout.addWidget(self._eyebrow("ALTERNATIVES"))
-        self.alternative_labels = [QLabel("—"), QLabel("—")]
-        for label in self.alternative_labels:
-            label.setObjectName("alternative")
-            layout.addWidget(label)
-
-        layout.addSpacing(14)
-        layout.addWidget(self._eyebrow("MOVE HISTORY"))
-        self.history_label = QLabel("No moves yet")
-        self.history_label.setObjectName("history")
-        self.history_label.setWordWrap(True)
-        self.history_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        scroll = QScrollArea()
-        scroll.setObjectName("historyScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setWidget(self.history_label)
-        scroll.setMinimumHeight(90)
-        layout.addWidget(scroll, 1)
-
-        edit_row = QHBoxLayout()
-        self.undo_button = self._button("Undo", self.undo_requested)
-        self.redo_button = self._button("Redo", self.redo_requested)
-        edit_row.addWidget(self.undo_button)
-        edit_row.addWidget(self.redo_button)
-        layout.addLayout(edit_row)
-
-        grid = QGridLayout()
         self.scan_button = self._button("Scan Board", self.scan_requested, "primaryButton")
         self.new_button = self._button("New Game", self.new_game_requested)
-        grid.addWidget(self.scan_button, 0, 0)
-        grid.addWidget(self.new_button, 0, 1)
-        layout.addLayout(grid)
-        self.set_history("")
-        self.set_undo_redo(False, False)
-
-    @staticmethod
-    def _eyebrow(text):
-        label = QLabel(text)
-        label.setObjectName("eyebrow")
-        return label
+        self.layout_grid = QGridLayout(self)
+        self.set_compact(False)
 
     @staticmethod
     def _button(text, signal, object_name="secondaryButton"):
@@ -105,9 +49,73 @@ class AnalysisPanel(QFrame):
         button.clicked.connect(lambda checked=False: signal.emit())
         return button
 
+    @property
+    def compact(self):
+        return self._compact
+
+    def _clear_layout(self):
+        while self.layout_grid.count():
+            self.layout_grid.takeAt(0)
+        for row in range(10):
+            self.layout_grid.setRowStretch(row, 0)
+        for column in range(5):
+            self.layout_grid.setColumnStretch(column, 0)
+
+    def set_compact(self, compact: bool):
+        self._compact = compact
+        self._clear_layout()
+        if compact:
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(16777215)
+            self.setMinimumHeight(105)
+            self.setMaximumHeight(128)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.layout_grid.setContentsMargins(14, 10, 14, 10)
+            self.layout_grid.setHorizontalSpacing(10)
+            self.layout_grid.setVerticalSpacing(2)
+            self.layout_grid.addWidget(self.playing_label, 0, 0)
+            self.layout_grid.addWidget(self.turn_label, 0, 1, 1, 3)
+            self.layout_grid.addWidget(self.best_heading, 1, 0)
+            self.layout_grid.addWidget(self.best_button, 1, 1)
+            self.layout_grid.addWidget(self.uci_label, 1, 2)
+            self.layout_grid.addWidget(self.evaluation_label, 1, 3)
+            self.layout_grid.addWidget(self.state_label, 2, 0, 1, 2)
+            self.layout_grid.addWidget(self.scan_button, 2, 2)
+            self.layout_grid.addWidget(self.new_button, 2, 3)
+            self.layout_grid.setColumnStretch(1, 1)
+        else:
+            self.setMinimumWidth(175)
+            self.setMaximumWidth(205)
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(280)
+            self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.layout_grid.setContentsMargins(14, 16, 14, 14)
+            self.layout_grid.setHorizontalSpacing(6)
+            self.layout_grid.setVerticalSpacing(4)
+            self.layout_grid.addWidget(self.playing_label, 0, 0, 1, 2)
+            self.layout_grid.addWidget(self.turn_label, 1, 0, 1, 2)
+            self.layout_grid.addWidget(self.state_label, 2, 0, 1, 2)
+            self.layout_grid.addWidget(self.best_heading, 4, 0, 1, 2)
+            self.layout_grid.addWidget(self.best_button, 5, 0, 1, 2)
+            self.layout_grid.addWidget(self.uci_label, 6, 0, 1, 2)
+            self.layout_grid.addWidget(self.evaluation_label, 7, 0, 1, 2)
+            self.layout_grid.addWidget(self.scan_button, 8, 0, 1, 2)
+            self.layout_grid.addWidget(self.new_button, 9, 0, 1, 2)
+
+    def sizeHint(self):
+        return QSize(390, 112) if self._compact else QSize(205, 205)
+
+    def minimumSizeHint(self):
+        return QSize(360, 105) if self._compact else QSize(175, 180)
+
+    def wide_width_hint(self):
+        return 205
+
+    def set_player(self, color: chess.Color):
+        self.playing_label.setText("Playing: White" if color else "Playing: Black")
+
     def set_position(self, owner: str, turn: str, state: str = ""):
-        self.owner_label.setText(owner)
-        self.turn_label.setText(turn)
+        self.turn_label.setText(f"{owner} · {turn}" if owner and owner != "Ready" else turn)
         self.state_label.setText(state)
         self.state_label.setVisible(bool(state))
 
@@ -116,8 +124,6 @@ class AnalysisPanel(QFrame):
         self.best_button.setEnabled(False)
         self.uci_label.clear()
         self.evaluation_label.setText("Evaluation —")
-        for label in self.alternative_labels:
-            label.setText("—")
 
     def set_analyzing(self):
         self.clear_analysis()
@@ -125,7 +131,7 @@ class AnalysisPanel(QFrame):
 
     def set_unavailable(self):
         self.clear_analysis()
-        self.best_button.setText("Not configured")
+        self.best_button.setText("Unavailable")
 
     def set_analysis(self, rows):
         if not rows:
@@ -138,16 +144,13 @@ class AnalysisPanel(QFrame):
         self.evaluation_label.setText(
             f"Mate {mate:+d}" if mate is not None else f"Evaluation {score / 100:+.2f}"
         )
-        alternatives = rows[1:3]
-        for index, label in enumerate(self.alternative_labels):
-            label.setText(f"{index + 1}.  {alternatives[index][0]}" if index < len(alternatives) else "—")
 
+    # History and undo/redo remain available in game state and shortcuts, not primary UI.
     def set_history(self, text: str):
-        self.history_label.setText(text or "No moves yet")
+        return None
 
     def set_undo_redo(self, can_undo: bool, can_redo: bool):
-        self.undo_button.setEnabled(can_undo)
-        self.redo_button.setEnabled(can_redo)
+        return None
 
     def set_scan_mode(self, has_imported_position: bool):
         self.scan_button.setText("Rescan" if has_imported_position else "Scan Board")
