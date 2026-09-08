@@ -22,7 +22,7 @@ def test_missing_king_is_rejected():
  with pytest.raises(ValueError,match='king count'):build_board(parse(payload({'e1':'white_king'})))
 def test_ai_key_missing_is_safe(monkeypatch):
  monkeypatch.delenv('OPENAI_API_KEY',raising=False); c=OpenAIClient(client=object()); assert not c.ready()
- with pytest.raises(AIError,match='key missing'):c.client()
+ with pytest.raises(AIError,match='key required'):c.client()
 def test_schema_has_all_64_fixed_square_keys():
  squares=SCHEMA['properties']['squares']; assert len(squares['required'])==64 and squares['additionalProperties'] is False and 'unknown' not in squares['properties']['e4']['enum']
 def test_luna_model_is_passed_to_api_unchanged(): assert normalize_model('gpt-5.6-luna')=='gpt-5.6-luna'

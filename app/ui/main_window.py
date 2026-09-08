@@ -8,7 +8,7 @@ from pathlib import Path
 
 import chess
 from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QBoxLayout, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from app.ai.board_recognizer import RecognitionWorker
@@ -22,6 +22,7 @@ from app.chess.game_state import (
     turn_from_selection,
 )
 from app.core.logging_setup import LOG_DIRECTORY, configure, install_exception_hook
+from app.core.resources import resource_path
 from app.engine.stockfish import EngineWorker
 from app.ui.analysis_panel import AnalysisPanel
 from app.ui.board_widget import ChessBoardWidget, SquareBoardHost
@@ -121,6 +122,9 @@ class MainWindow(QMainWindow):
         logging.info("APP_START")
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=%s", self.model, "settings" if stored_model else "environment_or_default")
         self.setWindowTitle("Chess Vision Assistant V1.6")
+        icon_path = resource_path("assets", "icons", "chess-vision.ico")
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1150, 800)
         self.setMinimumSize(560, 560)
         self._build_ui()
@@ -187,6 +191,11 @@ class MainWindow(QMainWindow):
         outer.addLayout(self.body, 1)
         self.status = TransientStatusLabel()
         outer.addWidget(self.status)
+        brand = QLabel("Built by 47 Lab")
+        brand.setObjectName("muted")
+        brand.setAlignment(Qt.AlignRight)
+        brand.setStyleSheet("font-size: 10px; color: rgba(152,163,158,145); padding-right: 2px;")
+        outer.addWidget(brand)
 
     def _apply_responsive_layout(self, force=False):
         margins = self.centralWidget().layout().contentsMargins()
@@ -215,6 +224,9 @@ class MainWindow(QMainWindow):
         stored = self.settings.value("stockfish", "", type=str)
         if stored and Path(stored).is_file():
             return stored
+        configured = os.getenv("STOCKFISH_PATH", "")
+        if configured and Path(configured).is_file():
+            return configured
         found = shutil.which("stockfish")
         if found:
             return found
@@ -359,6 +371,19 @@ class MainWindow(QMainWindow):
     def scan_board(self):
         if self.ai_worker and self.ai_worker.isRunning():
             return
+        if not self.openai_client.ready():
+            logging.info("OPENAI_SCAN_BLOCKED reason=api_key_missing")
+            message = QMessageBox(self)
+            message.setIcon(QMessageBox.Information)
+            message.setWindowTitle("OpenAI setup required")
+            message.setText("OpenAI API key required.")
+            message.setInformativeText("Add your API key in Settings to use board scanning.")
+            open_settings = message.addButton("Open Settings", QMessageBox.AcceptRole)
+            message.addButton(QMessageBox.Cancel)
+            message.exec()
+            if message.clickedButton() is open_settings:
+                self.open_settings()
+            return
         self.scan_token += 1
         logging.info("SCAN_STARTED token=%d", self.scan_token)
         self.status.setText("Select the chessboard")
@@ -421,7 +446,7 @@ class MainWindow(QMainWindow):
     def _start_recognition(self, crop, token):
         if not self.openai_client.ready():
             logging.error("OPENAI_SCAN_FAILED reason=api_key_missing")
-            self.user_error("OpenAI API key not configured. Add OPENAI_API_KEY to .env.")
+            self.user_error("OpenAI API key required. Add your API key in Settings to use board scanning.")
             self._update_position()
             return
         self.ai_worker = RecognitionWorker(crop, self.model, self.debug, self.openai_client)
@@ -482,6 +507,13 @@ class MainWindow(QMainWindow):
             self.analyze()
         elif engine_path:
             QMessageBox.warning(self, "Settings", "The selected Stockfish executable does not exist.")
+        elif self.engine_path:
+            if self.engine_worker:
+                self.engine_worker.stop()
+                self.engine_worker = None
+            self.engine_path = ""
+            self.settings.remove("stockfish")
+            self.panel.set_unavailable()
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=settings", self.model)
 
     def user_error(self, text):
@@ -492,11 +524,13 @@ class MainWindow(QMainWindow):
         return {"fen": self.board.fen(), "board_version": self.game.version, "scan_active": bool(self.ai_worker and self.ai_worker.isRunning())}
 
     def closeEvent(self, event):
-        if self.ai_worker and self.ai_worker.isRunning() and not self._closing:
+        if self.ai_worker and self.ai_worker.isRunning():
+            if not self._closing:
+                self.ai_worker.finished.connect(self.close)
             self._closing = True
             self.scan_token += 1
-            self.status.setText("Finishing current scan before closing…")
-            self.ai_worker.finished.connect(self.close)
+            self.status.setText("Finishing scan cancellation…")
+            self.ai_worker.requestInterruption()
             event.ignore()
             return
         self._closing = True

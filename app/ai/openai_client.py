@@ -1,5 +1,6 @@
 import os, json, base64, time, logging
 from dotenv import load_dotenv
+from app.core.credentials import CredentialStore, resolve_openai_key
 load_dotenv()
 DEFAULT_OPENAI_VISION_MODEL = 'gpt-5.6-luna'
 class AIError(RuntimeError): pass
@@ -12,16 +13,31 @@ def resolve_model(settings_model=None, environment=None):
  env = os.environ if environment is None else environment
  return normalize_model(settings_model or env.get('OPENAI_VISION_MODEL') or DEFAULT_OPENAI_VISION_MODEL)
 class OpenAIClient:
- def __init__(self, model=None, client=None):
-  self.model=normalize_model(model or os.getenv('OPENAI_VISION_MODEL') or DEFAULT_OPENAI_VISION_MODEL); self._client=client
- def ready(self): return bool(os.getenv('OPENAI_API_KEY'))
+ def __init__(self, model=None, client=None, credential_store=None, api_key=None):
+  self.model=normalize_model(model or os.getenv('OPENAI_VISION_MODEL') or DEFAULT_OPENAI_VISION_MODEL); self._client=client; self.credential_store=credential_store or CredentialStore(); self._explicit_api_key=api_key
+ def resolved_key(self):
+  if self._explicit_api_key is not None: return self._explicit_api_key.strip(), 'explicit'
+  return resolve_openai_key(self.credential_store)
+ def ready(self): return bool(self.resolved_key()[0])
  def client(self):
-  if not self.ready(): raise AIError('OpenAI API key missing. Add OPENAI_API_KEY to .env and restart.')
+  api_key,_=self.resolved_key()
+  if not api_key: raise AIError('OpenAI API key required. Add your API key in Settings to use board scanning.')
   if self._client is None:
    try:
-    from openai import OpenAI; self._client=OpenAI(timeout=20,max_retries=2)
-   except Exception as e: raise AIError(f'OpenAI SDK unavailable: {e}')
+    from openai import OpenAI; self._client=OpenAI(api_key=api_key,timeout=20,max_retries=2)
+   except Exception as e: raise AIError(f'OpenAI SDK unavailable ({type(e).__name__})') from None
   return self._client
+ def test_connection(self):
+  """Validate authentication with a metadata request that consumes no model tokens."""
+  try:
+   self.client().models.list()
+  except Exception as e:
+   name=type(e).__name__
+   if name in ('AuthenticationError','PermissionDeniedError'): raise AIError('Invalid API key')
+   if name in ('APITimeoutError','TimeoutError'): raise AIError('Request timed out')
+   if name in ('APIConnectionError','ConnectionError'): raise AIError('Network unavailable')
+   raise AIError(f'API error ({name})')
+  return True
  def recognize(self,png,schema,prompt):
   started=time.monotonic(); data='data:image/png;base64,'+base64.b64encode(png).decode()
   logging.info('OPENAI_REQUEST_STARTED model=%s png_bytes=%d',self.model,len(png))
@@ -31,5 +47,6 @@ class OpenAIClient:
    return json.loads(r.output_text),latency,{'api_success':True,'status':getattr(r,'status','unknown'),'request_id':getattr(r,'_request_id','unknown'),'model':self.model}
   except AIError: raise
   except Exception as e:
-   logging.exception('OPENAI_REQUEST_FAILED model=%s exception_type=%s message=%s http_status=%s request_id=%s',self.model,type(e).__name__,str(e),getattr(e,'status_code','unknown'),getattr(e,'request_id','unknown'))
-   raise AIError(f'OpenAI request failed: {type(e).__name__}: {e}')
+   safe = AIError(f'OpenAI request failed ({type(e).__name__}). Check your connection and API settings.')
+   logging.error('OPENAI_REQUEST_FAILED model=%s exception_type=%s',self.model,type(e).__name__,exc_info=(AIError,safe,e.__traceback__))
+   raise safe from None
