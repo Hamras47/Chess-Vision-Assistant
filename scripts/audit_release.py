@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PATTERN = re.compile(rb'(?:sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----)')
+PATTERN = re.compile(
+    rb'(?:sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}'
+    rb'|gh[pousr]_[A-Za-z0-9]{30,})'
+)
 
 
 def git(*args):

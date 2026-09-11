@@ -40,6 +40,12 @@ See [Architecture](docs/ARCHITECTURE.md) for the real component flow.
 
 ## Installation
 
+## Download for Windows
+
+Go to [Releases](https://github.com/Hamras47/Chess-Vision-Assistant/releases) and download `ChessVision-Windows-x64.zip`.
+
+Extract the ZIP, open the `ChessVision` folder, and run `ChessVision.exe`. No Python installation or command prompt is required. In **Settings**, add your own OpenAI API key for board scanning and select your separately installed Stockfish executable for analysis.
+
 ### Windows App
 
 When a Windows binary release is available, download and extract the **complete distribution ZIP**, then double-click `ChessVision.exe` inside the extracted `ChessVision` folder. Keep `_internal`, licenses, and the executable together; copying only the EXE will not work. You can also build this folder from source using the instructions below. It opens without a command prompt. Manual board use does not require OpenAI or Stockfish.
