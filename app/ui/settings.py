@@ -152,7 +152,7 @@ class SettingsDialog(QDialog):
         self.suggestions.setChecked(suggestions_enabled)
         self.suggestions.setToolTip("Show best moves, arrows and evaluation. Off stops automatic analysis.")
         form.addRow("", self.suggestions)
-        about = QLabel("Chess Vision 2.47  ·  Built by 47 Lab")
+        about = QLabel("Chess Vision 2.5  ·  Built by 47 Lab")
         about.setObjectName("muted")
         root.addWidget(about)
         footer = QHBoxLayout()

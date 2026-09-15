@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
         self.layout_mode = "wide"
         logging.info("APP_START")
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=%s", self.model, "settings" if stored_model else "environment_or_default")
-        self.setWindowTitle("Chess Vision 2.47")
+        self.setWindowTitle("Chess Vision 2.5")
         icon_path = resource_path("assets", "icons", "chess-vision.ico")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))

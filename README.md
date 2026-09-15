@@ -4,7 +4,7 @@ Chess Vision is a focused Windows desktop chess-analysis companion. Capture a po
 
 ![Chess Vision main window](docs/screenshots/01-main-window.png)
 
-> Chess Vision 2.47 uses one-time AI board recognition and deterministic manual move entry.
+> Chess Vision 2.5 adds Analysis, local Player vs Player, and Stockfish Player vs Computer modes, with one-time AI scanning in Analysis mode.
 
 ## Overview
 

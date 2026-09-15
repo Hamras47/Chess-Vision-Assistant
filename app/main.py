@@ -1,4 +1,4 @@
-"""Chess Vision 2.47 entry point."""
+"""Chess Vision 2.5 entry point."""
 import sys
 
 from PySide6.QtGui import QIcon
@@ -11,8 +11,8 @@ from app.ui.main_window import MainWindow
 def main():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Chess Vision")
-    app.setApplicationDisplayName("Chess Vision 2.47")
-    app.setApplicationVersion("2.47")
+    app.setApplicationDisplayName("Chess Vision 2.5")
+    app.setApplicationVersion("2.5")
     icon = resource_path("assets", "icons", "chess-vision.ico")
     if icon.is_file():
         app.setWindowIcon(QIcon(str(icon)))
