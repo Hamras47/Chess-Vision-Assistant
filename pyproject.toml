@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chess-vision-assistant-v16"
-version = "1.6.0"
+version = "2.47"
 license = {file = "LICENSE"}
 requires-python = ">=3.11"
 dependencies = ["PySide6>=6.6", "python-chess>=1.999", "numpy>=1.26", "opencv-python>=4.9", "mss>=9.0", "openai>=1.0", "python-dotenv>=1.0", "keyring>=25.0"]

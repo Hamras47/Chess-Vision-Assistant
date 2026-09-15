@@ -1,5 +1,17 @@
 # Chess Vision User Guide
 
+## Chess Vision 2.47
+
+Use **Left Arrow** to undo and **Right Arrow** to redo. The actual chess position, turn, castling rights and en-passant state are restored. A new move after undo clears the redo branch. Arrow keys keep their normal behavior in text fields, dropdowns and modal dialogs. Ctrl+Z/Ctrl+Y remain available.
+
+The evaluation bar sits beside the board. Positive values favor White and negative values favor Black, even when you play Black or flip the board. `M3` means White mates in three; `-M2` means Black mates in two. The smooth bounded bar is an advantage indicator, not a predicted win percentage.
+
+In **Settings → AI Recognition**, choose **GPT-5.6 Terra** or **GPT-5.6 Luna**. Terra is the default for new configurations and balances intelligence and cost; Luna is the lighter, lower-cost option. Existing explicit Luna choices remain saved. Your chosen model is used for the next scan. API project permissions determine availability.
+
+In **Settings → Chess Engine**, turn **Stockfish Suggestions** off to stop automatic analysis. Best moves show Off, arrows disappear, and the bar dims to neutral. Manual moves, undo/redo, and scans still work. Turning it on analyzes the current position.
+
+Scanning validates the image before sending it. A blank or invalid screenshot gets one local recapture after the overlay closes; failed AI recognition asks you to Rescan and does not automatically repeat API requests.
+
 ## Installation and first launch
 
 When available on the project's release page, download the **complete Windows distribution ZIP** and extract it. Open the extracted `ChessVision` folder and double-click `ChessVision.exe`. Keep its `_internal` folder and license files beside it; the EXE alone is not a standalone application. If no binary release is listed, follow the README's build instructions. Chess Vision opens with a normal starting position; manual play works without an OpenAI key or Stockfish.

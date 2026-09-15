@@ -67,12 +67,7 @@ class RecognitionWorker(QThread):
 
 
 def _recognize_with_retries(image, model, debug, client, cancelled):
-        last=None
-        for attempt in range(1,3):
-            if cancelled.is_set():
-                return None
-            try:
-                logging.info('Recognition attempt=%d/2',attempt)
-                return recognize_image(image,model,debug,client)
-            except Exception as e: last=e; logging.exception('Recognition attempt=%d failed stage=%s reason=%s',attempt,getattr(e,'stage','unknown'),getattr(e,'reason',e))
-        raise last
+        # One user scan = one AI call. Only screenshot acquisition may retry.
+        if cancelled.is_set():
+            return None
+        return recognize_image(image,model,debug,client)

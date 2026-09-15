@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import threading
 
 import chess
 import chess.engine
 from PySide6.QtCore import QThread, Signal
+
+
+def engine_startup_options():
+    """python-chess forwards these options to its subprocess transport."""
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 def parse_analysis(board: chess.Board, infos) -> list[tuple[str, str, int, int | None, int]]:
@@ -19,7 +25,8 @@ def parse_analysis(board: chess.Board, infos) -> list[tuple[str, str, int, int |
         if not pv:
             continue
         move = pv[0]
-        score = info["score"].pov(board.turn)
+        # All consumers use White's perspective, independent of turn/orientation.
+        score = info["score"].white()
         rows.append(
             (
                 board.san(move),
@@ -55,7 +62,7 @@ class EngineWorker(QThread):
         try:
             if not self.path or not os.path.isfile(self.path):
                 raise FileNotFoundError("Stockfish executable is not configured")
-            engine = chess.engine.SimpleEngine.popen_uci(self.path)
+            engine = chess.engine.SimpleEngine.popen_uci(self.path, **engine_startup_options())
             while self._running:
                 with self._condition:
                     while self._pending is None and self._running:
@@ -88,8 +95,12 @@ class EngineWorker(QThread):
                 except Exception:
                     logging.exception("Stockfish shutdown failed")
 
-    def stop(self):
+    def request_stop(self):
         with self._condition:
             self._running = False
+            self._pending = None
             self._condition.notify_all()
+
+    def stop(self):
+        self.request_stop()
         self.wait(3000)

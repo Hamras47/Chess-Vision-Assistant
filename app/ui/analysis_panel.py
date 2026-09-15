@@ -115,7 +115,8 @@ class AnalysisPanel(QFrame):
         self.playing_label.setText("Playing: White" if color else "Playing: Black")
 
     def set_position(self, owner: str, turn: str, state: str = ""):
-        self.turn_label.setText(f"{owner} · {turn}" if owner and owner != "Ready" else turn)
+        self.turn_label.setText(turn)
+        self.turn_label.setToolTip(f"{owner} · {turn}" if owner and owner != "Ready" else turn)
         self.state_label.setText(state)
         self.state_label.setVisible(bool(state))
 
@@ -133,6 +134,11 @@ class AnalysisPanel(QFrame):
         self.clear_analysis()
         self.best_button.setText("Unavailable")
 
+    def set_off(self):
+        self.clear_analysis()
+        self.best_button.setText("Off")
+        self.evaluation_label.setText("Suggestions off")
+
     def set_analysis(self, rows):
         if not rows:
             self.clear_analysis()
@@ -142,7 +148,7 @@ class AnalysisPanel(QFrame):
         self.best_button.setEnabled(True)
         self.uci_label.setText(f"{uci[:2]}  →  {uci[2:4]}")
         self.evaluation_label.setText(
-            f"Mate {mate:+d}" if mate is not None else f"Evaluation {score / 100:+.2f}"
+            f"{'-' if mate < 0 else ''}M{abs(mate)}" if mate is not None else f"{score / 100:+.2f}"
         )
 
     # History and undo/redo remain available in game state and shortcuts, not primary UI.

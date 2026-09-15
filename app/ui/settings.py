@@ -8,11 +8,12 @@ import chess.engine
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QVBoxLayout, QWidget, QCheckBox,
 )
 
-from app.ai.openai_client import DEFAULT_OPENAI_VISION_MODEL, OpenAIClient
+from app.ai.openai_client import DEFAULT_OPENAI_VISION_MODEL, VISION_MODELS, OpenAIClient
 from app.core.credentials import CredentialStore, CredentialStoreError
+from app.engine.stockfish import engine_startup_options
 
 
 def mask_api_key(value: str) -> str:
@@ -56,7 +57,7 @@ class EngineTestWorker(QThread):
     def run(self):
         engine = None
         try:
-            engine = chess.engine.SimpleEngine.popen_uci(self.path, timeout=5)
+            engine = chess.engine.SimpleEngine.popen_uci(self.path, timeout=5, **engine_startup_options())
             self.complete.emit(True, "✓ Engine detected")
         except Exception:
             self.complete.emit(False, "Could not start engine")
@@ -66,7 +67,7 @@ class EngineTestWorker(QThread):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, model, engine_path, analysis_ms, parent=None, credential_store=None):
+    def __init__(self, model, engine_path, analysis_ms, parent=None, credential_store=None, suggestions_enabled=True):
         super().__init__(parent)
         self.credential_store = credential_store or CredentialStore()
         self._test_worker = None
@@ -78,10 +79,13 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Chess Vision Settings")
         self.setMinimumWidth(500)
         root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 20)
+        root.setSpacing(16)
         form = QFormLayout()
+        form.setVerticalSpacing(12)
         root.addLayout(form)
 
-        heading = QLabel("OPENAI")
+        heading = QLabel("AI RECOGNITION")
         heading.setObjectName("dialogEyebrow")
         form.addRow(heading)
         self.api_key = QLineEdit()
@@ -99,8 +103,13 @@ class SettingsDialog(QDialog):
         remove_key.clicked.connect(self._remove_key)
         key_layout.addWidget(remove_key)
         form.addRow("API Key", key_row)
-        self.model = QLineEdit(model)
-        form.addRow("Vision model", self.model)
+        self.model = QComboBox()
+        for identifier, label in VISION_MODELS.items():
+            self.model.addItem(label, identifier)
+        if model not in VISION_MODELS:
+            self.model.addItem(f"Developer override: {model}", model)
+        self.model.setCurrentIndex(max(0, self.model.findData(model)))
+        form.addRow("Recognition model", self.model)
         self.api_status = QLabel("Saved securely" if self._saved_key else ("Using environment key" if os.getenv("OPENAI_API_KEY") else "Not configured"))
         self.test_api = QPushButton("Test Connection")
         self.test_api.clicked.connect(self._test_connection)
@@ -111,7 +120,7 @@ class SettingsDialog(QDialog):
         actions.addWidget(self.api_status, 1)
         form.addRow("", api_actions)
 
-        engine_heading = QLabel("STOCKFISH ENGINE")
+        engine_heading = QLabel("CHESS ENGINE")
         engine_heading.setObjectName("dialogEyebrow")
         form.addRow(engine_heading)
         path_row = QWidget()
@@ -139,6 +148,13 @@ class SettingsDialog(QDialog):
         index = self.analysis_time.findData(analysis_ms)
         self.analysis_time.setCurrentIndex(index if index >= 0 else 1)
         form.addRow("Move time", self.analysis_time)
+        self.suggestions = QCheckBox("Stockfish Suggestions")
+        self.suggestions.setChecked(suggestions_enabled)
+        self.suggestions.setToolTip("Show best moves, arrows and evaluation. Off stops automatic analysis.")
+        form.addRow("", self.suggestions)
+        about = QLabel("Chess Vision 2.47  ·  Built by 47 Lab")
+        about.setObjectName("muted")
+        root.addWidget(about)
         footer = QHBoxLayout()
         footer.addStretch()
         cancel = QPushButton("Cancel")
@@ -174,7 +190,7 @@ class SettingsDialog(QDialog):
             return
         self.test_api.setEnabled(False)
         self.api_status.setText("Testing…")
-        self._test_worker = ConnectionTestWorker(key, self.model.text().strip() or DEFAULT_OPENAI_VISION_MODEL, self)
+        self._test_worker = ConnectionTestWorker(key, self.model.currentData() or DEFAULT_OPENAI_VISION_MODEL, self)
         self._test_worker.complete.connect(self._api_test_done)
         self._test_worker.start()
 
@@ -218,7 +234,7 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def values(self):
-        return self.model.text().strip(), self.engine_path.text().strip(), self.analysis_time.currentData()
+        return self.model.currentData(), self.engine_path.text().strip(), self.analysis_time.currentData()
 
     def _busy(self):
         return any(worker and worker.isRunning() for worker in (self._test_worker, self._engine_worker))

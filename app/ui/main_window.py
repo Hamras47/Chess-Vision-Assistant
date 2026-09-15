@@ -7,9 +7,9 @@ import shutil
 from pathlib import Path
 
 import chess
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer, QEvent
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QBoxLayout, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QBoxLayout, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget, QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox, QAbstractItemView
 
 from app.ai.board_recognizer import RecognitionWorker
 from app.ai.openai_client import OpenAIClient, resolve_model
@@ -25,48 +25,55 @@ from app.core.logging_setup import LOG_DIRECTORY, configure, install_exception_h
 from app.core.resources import resource_path
 from app.engine.stockfish import EngineWorker
 from app.ui.analysis_panel import AnalysisPanel
+from app.ui.evaluation_bar import EvaluationBar
 from app.ui.board_widget import ChessBoardWidget, SquareBoardHost
 from app.ui.dpi_coordinates import match_monitor
 from app.ui.promotion_dialog import PromotionDialog
 from app.ui.region_selector import RegionSelector
 from app.ui.settings import SettingsDialog
 from app.ui.setup_dialog import PositionSetupDialog
-from app.vision.capture import ScreenCapture, square_crop
+from app.vision.capture import ScreenCapture, validated_board_crop
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 STYLE = """
-QMainWindow { background: #101416; }
-QWidget#root { background: rgba(16,20,22,232); color: #eef2ef; }
-QWidget { color: #e9eeeb; font-family: "Segoe UI"; font-size: 14px; }
+QMainWindow { background: #20272b; }
+QWidget#root { background: rgba(30,38,42,225); color: #eef2ef; }
+QWidget { color: #e9eeeb; font-family: "Segoe UI Variable", "Segoe UI"; font-size: 13px; }
 QLabel#appTitle { font-size: 21px; font-weight: 600; color: #f4f6f4; }
 QLabel#appSubtitle, QLabel#muted { color: #98a39e; }
 QLabel#playing { font-size: 15px; font-weight: 600; }
 QLabel#stateLabel { color: #e7bd65; font-weight: 600; }
 QLabel#eyebrow, QLabel#dialogEyebrow { color: #91a099; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
 QLabel#moveCoordinates { color: #a8b4ae; font-size: 14px; }
-QLabel#evaluation { color: #cbd4cf; font-size: 16px; }
-QFrame#analysisCard { background: rgba(26,31,32,210); border: 1px solid rgba(255,255,255,0.09); border-radius: 11px; }
-QPushButton { background: #2a3131; color: #edf2ef; border: 1px solid #3b4542; border-radius: 8px; padding: 8px 12px; }
+QLabel#evaluation { color: #bac7c3; font-size: 13px; }
+QFrame#analysisCard { background: rgba(45,55,59,150); border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; }
+QPushButton { background: #354044; color: #edf2ef; border: 1px solid #465256; border-radius: 8px; padding: 8px 12px; }
 QPushButton:hover { background: #343e3b; border-color: #52605b; }
 QPushButton:pressed { background: #202625; }
 QPushButton:disabled { color: #68736e; background: #202524; border-color: #2b3230; }
 QPushButton#primaryButton { background: #3f745f; border-color: #568a73; font-weight: 600; }
 QPushButton#primaryButton:hover { background: #4a836c; }
-QPushButton#bestMove { background: transparent; border: none; padding: 0; text-align: left; font-size: 29px; font-weight: 650; color: #f4f6f4; }
+QPushButton#bestMove { background: transparent; border: none; padding: 0; text-align: left; font-size: 25px; font-weight: 600; color: #f4f6f4; }
 QPushButton#bestMove:hover { color: #a9d2bd; }
 QPushButton#utilityButton { padding: 7px 12px; color: #b8c2bd; }
 QPushButton#choiceButton { min-width: 125px; padding: 13px; }
 QPushButton#choiceButton:checked { background: #477b67; border-color: #72a18d; }
-QDialog { background: #181d1e; }
-QLineEdit, QComboBox { background: #222829; border: 1px solid #3a4542; border-radius: 7px; padding: 7px; }
+QDialog { background: #252e32; }
+QLineEdit, QComboBox { background: #303b40; border: 1px solid #4b585d; border-radius: 8px; padding: 7px; }
+QLineEdit:focus, QComboBox:focus { border-color: #85ac9a; }
+QComboBox QAbstractItemView { background: #303b40; color: #eef2ef; selection-background-color: #486c5e; }
+QComboBox { padding-right: 28px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border: none; border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+QComboBox::down-arrow { image: url($CHEVRON); width: 10px; height: 10px; }
 QLabel#apiLoaded { color: #85c6a5; }
 QLabel#apiMissing { color: #e3ad69; }
-QLabel#transientStatus { background: rgba(26,31,32,205); border: 1px solid rgba(255,255,255,0.08); border-radius: 7px; padding: 4px 9px; color: #b9c5bf; }
+QLabel#transientStatus { color: #aabbb4; font-size: 11px; }
 QLabel#dialogTitle { font-size: 19px; font-weight: 600; padding-bottom: 4px; }
 QCheckBox { spacing: 7px; color: #d6ded9; padding: 3px 2px; }
 QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #61706a; border-radius: 4px; background: #202625; }
-QCheckBox::indicator:checked { background: #568a73; border-color: #79aa94; }
+QCheckBox::indicator:checked { background: #568a73; border-color: #79aa94; image: url($CHECK); }
+QCheckBox:focus { border: 1px solid #85ac9a; border-radius: 5px; }
 """
 
 
@@ -80,13 +87,12 @@ class TransientStatusLabel(QLabel):
         self.setObjectName("transientStatus")
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
-        self._hide_timer.timeout.connect(self.hide)
-        self.hide()
+        self._hide_timer.timeout.connect(lambda: self.setText(""))
 
     def setText(self, text):
         super().setText(text)
         if not text:
-            self.hide()
+            self._hide_timer.stop()
             return
         self.show()
         if str(text).startswith(self.PERSISTENT_PREFIXES):
@@ -111,33 +117,36 @@ class MainWindow(QMainWindow):
         self.game = ManualGameState()
         self.engine_path = self._find_engine()
         self.analysis_ms = int(self.settings.value("analysis_time_ms", 600))
+        self.suggestions_enabled = self.settings.value("stockfish_suggestions", True, type=bool)
         self.engine_worker = None
+        self._retired_engines = []
         self.ai_worker = None
         self.selectors = []
         self.scan_token = 0
         self.analysis_token = 0
         self.has_imported_position = False
         self._closing = False
+        self._scan_active = False
+        self._engine_generation = 0
+        self._shutdown_timer = QTimer(self)
+        self._shutdown_timer.setSingleShot(True)
+        self._shutdown_timer.timeout.connect(self.close)
         self.layout_mode = "wide"
         logging.info("APP_START")
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=%s", self.model, "settings" if stored_model else "environment_or_default")
-        self.setWindowTitle("Chess Vision Assistant V1.6")
+        self.setWindowTitle("Chess Vision 2.47")
         icon_path = resource_path("assets", "icons", "chess-vision.ico")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1150, 800)
         self.setMinimumSize(560, 560)
         self._build_ui()
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(STYLE.replace("$CHECK", resource_path("assets", "icons", "check.svg").as_posix()).replace("$CHEVRON", resource_path("assets", "icons", "chevron.svg").as_posix()))
         self._install_shortcuts()
         self._apply_responsive_layout(force=True)
         self.view.set_board(self.game.board)
         self._update_position(ready=True)
-        if self.engine_path:
-            self._start_engine()
-        else:
-            self.panel.set_unavailable()
-            self.status.setText("Stockfish not configured — manual board is ready")
+        self.analyze()
         install_exception_hook(self.crash_context)
 
     @property
@@ -178,7 +187,8 @@ class MainWindow(QMainWindow):
         self.body.setSpacing(10)
         self.view = ChessBoardWidget()
         self.view.move_requested.connect(self.commit_manual_move)
-        self.board_host = SquareBoardHost(self.view)
+        self.eval_bar = EvaluationBar()
+        self.board_host = SquareBoardHost(self.view, evaluation_bar=self.eval_bar)
         self.body.addWidget(self.board_host, 1)
         self.panel = AnalysisPanel()
         self.panel.undo_requested.connect(self.undo)
@@ -190,12 +200,17 @@ class MainWindow(QMainWindow):
         self.body.setAlignment(self.panel, Qt.AlignTop)
         outer.addLayout(self.body, 1)
         self.status = TransientStatusLabel()
-        outer.addWidget(self.status)
+        footer = QWidget()
+        footer.setFixedHeight(24)
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(2, 0, 2, 0)
+        footer_layout.addWidget(self.status, 1)
         brand = QLabel("Built by 47 Lab")
         brand.setObjectName("muted")
         brand.setAlignment(Qt.AlignRight)
         brand.setStyleSheet("font-size: 10px; color: rgba(152,163,158,145); padding-right: 2px;")
-        outer.addWidget(brand)
+        footer_layout.addWidget(brand)
+        outer.addWidget(footer)
 
     def _apply_responsive_layout(self, force=False):
         margins = self.centralWidget().layout().contentsMargins()
@@ -217,8 +232,24 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
 
     def _install_shortcuts(self):
+        QApplication.instance().installEventFilter(self)
         for sequence, callback in (("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+R", self.scan_board), ("Ctrl+N", self.new_game), ("F", self.flip_board), ("Escape", self.view.clear_selection)):
             QShortcut(QKeySequence(sequence), self, activated=callback)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Left, Qt.Key_Right) and event.modifiers() == Qt.NoModifier:
+            app = QApplication.instance()
+            focus = app.focusWidget()
+            blocked = (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox, QAbstractItemView)
+            if app.activeWindow() is not self or app.activeModalWidget() or app.activePopupWidget():
+                return False
+            while focus is not None:
+                if isinstance(focus, blocked):
+                    return False
+                focus = focus.parentWidget()
+            (self.undo if event.key() == Qt.Key_Left else self.redo)()
+            return True
+        return super().eventFilter(watched, event)
 
     def _find_engine(self):
         stored = self.settings.value("stockfish", "", type=str)
@@ -236,18 +267,46 @@ class MainWindow(QMainWindow):
         return ""
 
     def _start_engine(self):
+        if not self.suggestions_enabled:
+            return
+        self._engine_generation += 1
+        generation = self._engine_generation
         if self.engine_worker:
-            self.engine_worker.stop()
+            self._retire_engine()
         self.engine_worker = EngineWorker(self.engine_path, self.analysis_ms / 1000, multipv=3)
         self.engine_worker.result.connect(self.analysis_done)
-        self.engine_worker.error.connect(self.analysis_failed)
+        self.engine_worker.error.connect(lambda token, error: self.analysis_failed(token, error) if generation == self._engine_generation else None)
         self.engine_worker.start()
 
+    def _retire_engine(self):
+        """Let in-flight work finish off the UI thread; tokens reject its result."""
+        worker = self.engine_worker
+        if worker is None:
+            return
+        self.engine_worker = None
+        self._retired_engines.append(worker)
+        worker.finished.connect(lambda: self._release_engine(worker))
+        worker.request_stop()
+        if not worker.isRunning():
+            self._release_engine(worker)
+
+    def _release_engine(self, worker):
+        if worker in self._retired_engines:
+            self._retired_engines.remove(worker)
+            worker.deleteLater()
+
     def analyze(self):
+        if self._closing:
+            return
         self.analysis_token += 1
         token = self.analysis_token
         self.view.arrow = None
         self.view.update()
+        self.eval_bar.set_inactive()
+        if not self.suggestions_enabled:
+            self.panel.set_off()
+            self.status.setText("")
+            return
         if self.board.is_game_over():
             self.panel.clear_analysis()
             return
@@ -263,11 +322,12 @@ class MainWindow(QMainWindow):
         self.engine_worker.submit(self.board.fen(), token)
 
     def analysis_done(self, token, rows):
-        if token != self.analysis_token:
+        if self._closing or not self.suggestions_enabled or token != self.analysis_token:
             logging.info("Discarded stale Stockfish result token=%d current=%d", token, self.analysis_token)
             return
         self.panel.set_analysis(rows)
         if rows:
+            self.eval_bar.set_evaluation(rows[0][2], rows[0][3])
             uci = rows[0][1]
             self.view.arrow = (chess.parse_square(uci[:2]), chess.parse_square(uci[2:4]))
             self.view.update()
@@ -275,10 +335,13 @@ class MainWindow(QMainWindow):
         self.status.setText("Ready")
 
     def analysis_failed(self, token, error):
+        if not self.suggestions_enabled:
+            return
         if token not in (-1, self.analysis_token):
             return
         logging.error("Stockfish unavailable token=%d error=%s", token, error)
         self.panel.set_unavailable()
+        self.eval_bar.set_inactive()
         self.status.setText("Stockfish not configured — manual board is ready")
 
     def _update_position(self, ready=False):
@@ -289,6 +352,7 @@ class MainWindow(QMainWindow):
         self.panel.set_undo_redo(self.game.can_undo, self.game.can_redo)
 
     def load_position(self, board, player_color, side_to_move, imported=True, castling_rights=()):
+        self._invalidate_scan()
         new_game = is_new_game_placement(board)
         loaded = chess.Board() if new_game else board.copy(stack=False)
         loaded.turn = side_to_move
@@ -298,6 +362,7 @@ class MainWindow(QMainWindow):
         self.game.load(loaded, player_color)
         self.has_imported_position = imported
         self.view.set_orientation(Orientation.WHITE_BOTTOM if player_color else Orientation.BLACK_BOTTOM)
+        self.eval_bar.set_flipped(self.view.flipped)
         self.view.arrow = None
         self.view.set_board(self.board)
         self.panel.clear_analysis()
@@ -321,6 +386,7 @@ class MainWindow(QMainWindow):
             self.status.setText("That move is not legal")
             return False
         self.view.animate_move(before, record.move, self.board)
+        self._invalidate_scan()
         self._update_position()
         logging.info("MANUAL_MOVE san=%s uci=%s fen=%s", record.san, record.move.uci(), self.board.fen())
         self.analyze()
@@ -330,6 +396,7 @@ class MainWindow(QMainWindow):
         record = self.game.undo()
         if not record:
             return False
+        self._invalidate_scan()
         self.view.arrow = None
         self.view.set_board(self.board, self.board.peek() if self.board.move_stack else None)
         self._update_position()
@@ -342,6 +409,7 @@ class MainWindow(QMainWindow):
         record = self.game.redo()
         if not record:
             return False
+        self._invalidate_scan()
         self.view.animate_move(before, record.move, self.board)
         self._update_position()
         logging.info("REDO san=%s fen=%s", record.san, self.board.fen())
@@ -358,6 +426,7 @@ class MainWindow(QMainWindow):
 
     def flip_board(self):
         self.view.flip()
+        self.eval_bar.set_flipped(self.view.flipped)
 
     def pulse_best_move(self):
         if not self.view.arrow:
@@ -369,7 +438,9 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(280, self.view.clear_selection)
 
     def scan_board(self):
-        if self.ai_worker and self.ai_worker.isRunning():
+        if self._closing:
+            return
+        if self._scan_active or (self.ai_worker and self.ai_worker.isRunning()):
             return
         if not self.openai_client.ready():
             logging.info("OPENAI_SCAN_BLOCKED reason=api_key_missing")
@@ -385,12 +456,15 @@ class MainWindow(QMainWindow):
                 self.open_settings()
             return
         self.scan_token += 1
+        self._scan_active = True
         logging.info("SCAN_STARTED token=%d", self.scan_token)
         self.status.setText("Select the chessboard")
         self.hide()
         QTimer.singleShot(180, self.begin_snip)
 
     def begin_snip(self):
+        if self._closing or not self._scan_active:
+            return
         try:
             frames = ScreenCapture().monitor_frames()
             monitors = [monitor for _, monitor in frames]
@@ -406,6 +480,7 @@ class MainWindow(QMainWindow):
             if self.selectors:
                 self.selectors[0].activateWindow()
         except Exception:
+            self._scan_active = False
             logging.exception("OPENAI_SCAN_FAILED reason=desktop_capture")
             self._close_selectors()
             self.show()
@@ -417,7 +492,16 @@ class MainWindow(QMainWindow):
             selector.deleteLater()
         self.selectors = []
 
+    def _invalidate_scan(self):
+        """Any canonical history change supersedes a pending visual import."""
+        self.scan_token += 1
+        self._scan_active = False
+        if self.ai_worker and self.ai_worker.isRunning():
+            self.ai_worker.requestInterruption()
+
     def snip_cancelled(self):
+        self._scan_active = False
+        self.scan_token += 1
         self._close_selectors()
         self.show()
         self.status.setText("Ready")
@@ -427,7 +511,31 @@ class MainWindow(QMainWindow):
         physical = selection["physical"]
         logging.info("BOARD_REGION_SELECTED x=%d y=%d width=%d height=%d", physical["left"], physical["top"], physical["width"], physical["height"])
         try:
-            crop = square_crop(selection["frozen_image"])
+            crop = validated_board_crop(selection["frozen_image"])
+        except ValueError:
+            # Only invalid captures are retried. Keep the app hidden and give
+            # the compositor 100ms to remove the selection overlays first.
+            token = self.scan_token
+            logging.info("CAPTURE_RETRY token=%d", token)
+            QTimer.singleShot(100, lambda: self._retry_capture(physical, token))
+            return
+        self._recognize_crop(crop, self.scan_token)
+
+    def _retry_capture(self, physical, token):
+        if self._closing or token != self.scan_token or not self._scan_active:
+            return
+        try:
+            crop = validated_board_crop(ScreenCapture().region(physical))
+        except Exception:
+            logging.exception("OPENAI_SCAN_FAILED reason=invalid_recapture")
+            self._scan_active = False
+            self.show()
+            self.user_error("Could not capture the selected board. Try Rescan.")
+            return
+        self._recognize_crop(crop, token)
+
+    def _recognize_crop(self, crop, token):
+        try:
             if self.debug:
                 debug_path = LOG_DIRECTORY / "debug"
                 debug_path.mkdir(parents=True, exist_ok=True)
@@ -435,16 +543,18 @@ class MainWindow(QMainWindow):
                 cv2.imwrite(str(debug_path / "latest_openai_board.png"), crop)
             self.show()
             self.raise_()
-            self.status.setText("Reading board with Luna…")
+            self.status.setText(f"Reading board with {self.model.removeprefix('gpt-5.6-').title()}…")
             self.panel.set_position("Scanning…", "One-time position import")
-            self._start_recognition(crop, self.scan_token)
+            self._start_recognition(crop, token)
         except Exception:
+            self._scan_active = False
             logging.exception("OPENAI_SCAN_FAILED reason=invalid_selection")
             self.show()
             self.user_error("Could not capture the selected board.")
 
     def _start_recognition(self, crop, token):
         if not self.openai_client.ready():
+            self._scan_active = False
             logging.error("OPENAI_SCAN_FAILED reason=api_key_missing")
             self.user_error("OpenAI API key required. Add your API key in Settings to use board scanning.")
             self._update_position()
@@ -457,6 +567,7 @@ class MainWindow(QMainWindow):
     def scan_done(self, token, board, result, latency):
         if token != self.scan_token:
             return
+        self._scan_active = False
         logging.info("OPENAI_SCAN_SUCCESS token=%d confidence=%.3f latency=%.3f", token, result.confidence, latency)
         new_game = is_new_game_placement(board)
         castling_options = None if new_game else available_castling_options(board)
@@ -486,12 +597,13 @@ class MainWindow(QMainWindow):
     def scan_failed(self, token, error):
         if token != self.scan_token:
             return
+        self._scan_active = False
         logging.error("OPENAI_SCAN_FAILED token=%d error=%s", token, error)
         self._update_position()
         self.user_error("Could not verify board. Try Rescan.")
 
     def open_settings(self):
-        dialog = SettingsDialog(self.model, self.engine_path, self.analysis_ms, self)
+        dialog = SettingsDialog(self.model, self.engine_path, self.analysis_ms, self, suggestions_enabled=self.suggestions_enabled)
         if not dialog.exec():
             return
         model, engine_path, analysis_ms = dialog.values()
@@ -500,11 +612,15 @@ class MainWindow(QMainWindow):
         self.settings.setValue("ai_model", self.model)
         self.settings.setValue("analysis_time_ms", analysis_ms)
         self.analysis_ms = analysis_ms
+        self.analysis_token += 1
+        self._engine_generation += 1
+        if self.engine_worker:
+            self._retire_engine()
+        self.suggestions_enabled = dialog.suggestions.isChecked()
+        self.settings.setValue("stockfish_suggestions", self.suggestions_enabled)
         if engine_path and Path(engine_path).is_file():
             self.engine_path = engine_path
             self.settings.setValue("stockfish", engine_path)
-            self._start_engine()
-            self.analyze()
         elif engine_path:
             QMessageBox.warning(self, "Settings", "The selected Stockfish executable does not exist.")
         elif self.engine_path:
@@ -514,6 +630,7 @@ class MainWindow(QMainWindow):
             self.engine_path = ""
             self.settings.remove("stockfish")
             self.panel.set_unavailable()
+        self.analyze()
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=settings", self.model)
 
     def user_error(self, text):
@@ -524,18 +641,23 @@ class MainWindow(QMainWindow):
         return {"fen": self.board.fen(), "board_version": self.game.version, "scan_active": bool(self.ai_worker and self.ai_worker.isRunning())}
 
     def closeEvent(self, event):
-        if self.ai_worker and self.ai_worker.isRunning():
-            if not self._closing:
-                self.ai_worker.finished.connect(self.close)
+        if not self._closing:
             self._closing = True
-            self.scan_token += 1
-            self.status.setText("Finishing scan cancellation…")
-            self.ai_worker.requestInterruption()
+            self.analysis_token += 1
+            self._engine_generation += 1
+            self._invalidate_scan()
+            self._close_selectors()
+            self.centralWidget().setEnabled(False)
+        workers = self._retired_engines[:] + ([self.engine_worker] if self.engine_worker else [])
+        for worker in workers:
+            worker.request_stop()
+        if (self.ai_worker and self.ai_worker.isRunning()) or any(worker.isRunning() for worker in workers):
+            # Never drop the last reference to a running QThread. The timer
+            # lets Qt keep repainting while slow startup/quit completes.
+            self.status.setText("Finishing background work…")
+            self._shutdown_timer.start(50)
             event.ignore()
             return
-        self._closing = True
-        self._close_selectors()
-        if self.engine_worker:
-            self.engine_worker.stop()
-            self.engine_worker = None
+        self.engine_worker = None
+        self._shutdown_timer.stop()
         super().closeEvent(event)

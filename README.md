@@ -4,7 +4,7 @@ Chess Vision is a focused Windows desktop chess-analysis companion. Capture a po
 
 ![Chess Vision main window](docs/screenshots/01-main-window.png)
 
-> Stable release model: one-time AI board recognition plus deterministic manual move tracking. Chess Vision 1.6 does **not** claim continuous automatic board tracking.
+> Chess Vision 2.47 uses one-time AI board recognition and deterministic manual move entry.
 
 ## Overview
 
@@ -16,6 +16,9 @@ The `python-chess` board is the source of truth. OpenAI vision reconstructs a se
 - Player, turn, and midgame castling confirmation
 - Legal click/drag moves, promotion, castling, en passant, undo/redo
 - Local asynchronous Stockfish best move, evaluation, and arrow
+- Left/Right arrow-key undo/redo with exact chess-state restoration
+- Animated White-perspective evaluation bar beside the board
+- Terra/Luna recognition selection and a persistent Stockfish Suggestions toggle
 - Responsive wide and split-screen layouts with board flipping
 - Windows Credential Manager storage for each user's API key
 - No bundled API key, Stockfish binary, ML runtime, or browser tracking
@@ -37,8 +40,6 @@ See the [user guide](docs/USER_GUIDE.md) for Settings and split-screen examples.
 5. Stockfish evaluates the canonical position locally. Use **Rescan** for a new import.
 
 See [Architecture](docs/ARCHITECTURE.md) for the real component flow.
-
-## Installation
 
 ## Download for Windows
 
@@ -88,7 +89,15 @@ Confirmed player color sets initial orientation. **Flip** or `F` rotates display
 
 ## Settings
 
-Settings contains the OpenAI credential/model, Stockfish executable/status, and analysis time. The Settings workflow never writes secrets to QSettings, JSON, `.env`, logs, screenshots, or packaged resources. Developers may still opt into the documented `OPENAI_API_KEY` environment fallback.
+Settings groups AI recognition, the chess engine, and application information. Select **GPT-5.6 Terra** (default) or **GPT-5.6 Luna**. Terra balances intelligence and cost; Luna is the lighter, lower-cost option. The saved model takes precedence over `OPENAI_VISION_MODEL`, then the Terra default. Unsupported saved values fall back to the environment/default. Exact API IDs: `gpt-5.6-terra`, `gpt-5.6-luna` ([official model catalog](https://developers.openai.com/api/docs/models)). Account access still depends on your API project.
+
+**Stockfish Suggestions** defaults to On. Off stops automatic analysis and hides arrows, with a neutral dimmed evaluation bar. Manual moves and scanning remain available. API keys stay in the OS credential store; they are never written to QSettings or packaged files.
+
+## Keyboard navigation and evaluation
+
+**Left Arrow** undoes one move; **Right Arrow** redoes it. Navigation restores turn, castling and en-passant state. Making a new move after undo clears the redo branch. Text fields, dropdowns and modal dialogs retain their normal arrow-key behavior.
+
+The vertical bar grows White's region for positive evaluation and Black's for negative evaluation. Flipping the board moves the regions to match the displayed sides without changing the score. `M3` means White has mate in three; `-M2` means Black has mate in two. Finite scores use a bounded curve, not a win-probability estimate.
 
 ## Building From Source
 

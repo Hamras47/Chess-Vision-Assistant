@@ -1,5 +1,22 @@
 # Changelog and Development Journey
 
+## 2.47
+
+### Added
+- Left/Right keyboard move navigation using canonical chess history.
+- Animated vertical evaluation bar with consistent White perspective.
+- Saved Terra/Luna recognition selector; Terra default for new configurations.
+- Persistent Stockfish Suggestions toggle.
+
+### Improved
+- Screenshot validation and one local recapture after invalid images; one AI request per scan.
+- Refined compact styling, Settings groups and secondary evaluation typography.
+- Rapid move/undo animation cleanup and stale engine-result protection.
+
+### Windows
+- Suppress Stockfish console windows for analysis and engine testing.
+- Updated ONEDIR application metadata to Chess Vision 2.47.
+
 ## 1.6.0 — Stable architecture
 
 - Prioritized reliable, predictable analysis over experimental live tracking.

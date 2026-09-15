@@ -47,17 +47,20 @@ class ChessBoardWidget(QWidget):
         self.setMinimumSize(180, 180)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
 
     def heightForWidth(self, width):
         return width
 
     def set_board(self, board: chess.Board, last_move: chess.Move | None = None):
+        self._stop_animation()
         self.board = board
         self.last_move = last_move
         self.clear_selection()
         self.update()
 
     def animate_move(self, before: chess.Board, move: chess.Move, after: chess.Board):
+        self._stop_animation()
         self.board = after
         self.last_move = move
         self.arrow = None
@@ -73,6 +76,14 @@ class ChessBoardWidget(QWidget):
         animation.finished.connect(self._animation_finished)
         self._animation = animation
         animation.start()
+
+    def _stop_animation(self):
+        # Rapid undo/redo must not leave an old animation hiding a new piece.
+        if self._animation is not None:
+            self._animation.stop()
+            self._animation.deleteLater()
+            self._animation = None
+        self._animation_finished()
 
     def _animation_value(self, value):
         self._animation_progress = float(value)
@@ -331,16 +342,22 @@ class ChessBoardWidget(QWidget):
 class SquareBoardHost(QWidget):
     """Keep the actual board widget square and centered at every host size."""
 
-    def __init__(self, board: ChessBoardWidget, parent=None):
+    def __init__(self, board: ChessBoardWidget, parent=None, evaluation_bar=None):
         super().__init__(parent)
         self.board = board
         self.board.setParent(self)
+        self.evaluation_bar = evaluation_bar
+        if evaluation_bar is not None:
+            evaluation_bar.setParent(self)
         self.setMinimumSize(180, 180)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def resizeEvent(self, event):
-        side = max(0, min(self.width(), self.height()))
-        left = (self.width() - side) // 2
+        gutter = 40 if self.evaluation_bar is not None else 0
+        side = max(0, min(self.width() - gutter, self.height()))
+        left = (self.width() - side - gutter) // 2 + gutter
         top = (self.height() - side) // 2
         self.board.setGeometry(left, top, side, side)
+        if self.evaluation_bar is not None:
+            self.evaluation_bar.setGeometry(left - gutter + 4, top + 4, 30, max(0, side - 8))
         super().resizeEvent(event)

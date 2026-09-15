@@ -29,4 +29,4 @@ def test_analysis_parses_black_side_to_move():
         "score": chess.engine.PovScore(chess.engine.Cp(35), chess.BLACK),
         "pv": [chess.Move.from_uci("e7e5")],
     }
-    assert parse_analysis(board, info)[0][:4] == ("e5", "e7e5", 35, None)
+    assert parse_analysis(board, info)[0][:4] == ("e5", "e7e5", -35, None)
