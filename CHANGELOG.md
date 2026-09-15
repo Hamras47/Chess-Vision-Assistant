@@ -1,6 +1,6 @@
 # Changelog and Development Journey
 
-## Unreleased — Game modes
+## 2.5 — Game modes
 
 ### Added
 - Analysis, local Player vs Player, and Player vs Computer modes.
