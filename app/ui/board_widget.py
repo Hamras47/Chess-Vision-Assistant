@@ -353,11 +353,14 @@ class SquareBoardHost(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def resizeEvent(self, event):
-        gutter = 40 if self.evaluation_bar is not None else 0
+        self.arrange_board()
+        super().resizeEvent(event)
+
+    def arrange_board(self):
+        gutter = 40 if self.evaluation_bar is not None and not self.evaluation_bar.isHidden() else 0
         side = max(0, min(self.width() - gutter, self.height()))
         left = (self.width() - side - gutter) // 2 + gutter
         top = (self.height() - side) // 2
         self.board.setGeometry(left, top, side, side)
         if self.evaluation_bar is not None:
             self.evaluation_bar.setGeometry(left - gutter + 4, top + 4, 30, max(0, side - 8))
-        super().resizeEvent(event)

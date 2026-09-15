@@ -1,5 +1,16 @@
 # Changelog and Development Journey
 
+## Unreleased — Game modes
+
+### Added
+- Analysis, local Player vs Player, and Player vs Computer modes.
+- Native Stockfish opponent Elo, bounded by the installed engine's supported range.
+- Per-game evaluation, full-strength suggestions, and undo/redo options.
+- Exact turn-pair undo/redo in computer games and natural, non-blocking computer timing.
+
+### Improved
+- Compact New Game setup with live Elo controls and restrained visual polish.
+
 ## 2.47
 
 ### Added
