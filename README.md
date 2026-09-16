@@ -183,3 +183,4 @@ Chess Vision Assistant is licensed under [GNU GPL version 3 or later](LICENSE). 
 ## Built by 47 Lab
 
 Chess Vision is built by 47 Lab with restrained in-app attribution.
+Visit ; www.fortysevenlab.com 
