@@ -5,6 +5,8 @@ import logging
 import os
 import subprocess
 import threading
+import math
+import random
 
 import chess
 import chess.engine
@@ -24,8 +26,38 @@ def configure_play_strength(engine, elo):
     option = engine.options[names["uci_elo"]]
     effective = max(option.min if option.min is not None else elo,
                     min(option.max if option.max is not None else elo, elo))
-    engine.configure({names["uci_limitstrength"]: True, names["uci_elo"]: effective})
-    return effective
+    beginner = option.min is not None and elo < option.min
+    engine.configure({names["uci_limitstrength"]: not beginner, names["uci_elo"]: effective})
+    return elo if beginner else effective
+
+
+def below_native_range(engine, elo):
+    option = next(option for name, option in engine.options.items() if name.casefold() == "uci_elo")
+    return option.min is not None and elo < option.min
+
+
+def choose_beginner_move(board, infos, elo):
+    """Approximate difficulty, not a calibrated rating: sample evaluated candidates.
+
+    Lower settings tolerate more centipawn loss, never unassessed random moves.
+    Retain forced mating moves and avoid forced mate losses when alternatives exist.
+    """
+    candidates = []
+    for info in infos if isinstance(infos, list) else [infos]:
+        pv = info.get("pv") or []
+        if pv and pv[0] in board.legal_moves and "score" in info:
+            score = info["score"].pov(board.turn).score(mate_score=100000)
+            if score is not None:
+                candidates.append((pv[0], score))
+    if not candidates:
+        raise ValueError("Stockfish returned no evaluated legal candidates")
+    best = max(score for _, score in candidates)
+    weakness = max(0, min(1, (1320 - elo) / 720))
+    loss_budget = 100 + 500 * weakness
+    temperature = 25 + 225 * weakness
+    bounded = [(move, best - score) for move, score in candidates if best - score <= loss_budget]
+    return random.choices([move for move, _ in bounded],
+                          weights=[math.exp(-loss / temperature) for _, loss in bounded], k=1)[0]
 
 
 def parse_analysis(board: chess.Board, infos) -> list[tuple[str, str, int, int | None, int]]:
@@ -83,6 +115,7 @@ class EngineWorker(QThread):
                 raise FileNotFoundError("Stockfish executable is not configured")
             engine = chess.engine.SimpleEngine.popen_uci(self.path, **engine_startup_options())
             effective_elo = configure_play_strength(engine, self.play_elo) if self.play_elo is not None else None
+            beginner = self.play_elo is not None and below_native_range(engine, self.play_elo)
             while self._running:
                 with self._condition:
                     while self._pending is None and self._running:
@@ -97,8 +130,13 @@ class EngineWorker(QThread):
                         self.result.emit(token, [])
                         continue
                     if self.play_elo is not None:
-                        reply = engine.play(board, chess.engine.Limit(time=self.analysis_time))
-                        self.result.emit(token, (reply.move, effective_elo))
+                        if beginner:
+                            infos = engine.analyse(board, chess.engine.Limit(time=self.analysis_time),
+                                                   multipv=min(12, board.legal_moves.count()))
+                            move = choose_beginner_move(board, infos, self.play_elo)
+                        else:
+                            move = engine.play(board, chess.engine.Limit(time=self.analysis_time)).move
+                        self.result.emit(token, (move, effective_elo))
                         continue
                     infos = engine.analyse(
                         board,

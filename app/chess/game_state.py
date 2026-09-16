@@ -50,6 +50,13 @@ class MoveRecord:
     san: str
     move_number: int
     color: chess.Color
+    captured: chess.Piece | None = None
+
+
+def captured_piece(board, move):
+    if board.is_en_passant(move):
+        return chess.Piece(chess.PAWN, not board.turn)
+    return board.piece_at(move.to_square)
 
 
 class ManualGameState:
@@ -112,7 +119,7 @@ class ManualGameState:
         move = chess.Move(source, target, promotion=promotion)
         if move not in self._board.legal_moves:
             raise ValueError(f"Illegal move: {move.uci()}")
-        record = MoveRecord(move, self._board.san(move), self._board.fullmove_number, self._board.turn)
+        record = MoveRecord(move, self._board.san(move), self._board.fullmove_number, self._board.turn, captured_piece(self._board, move))
         self._board.push(move)
         self._records.append(record)
         self._redo.clear()
@@ -135,7 +142,7 @@ class ManualGameState:
         if move not in self._board.legal_moves:
             self._redo.clear()
             return None
-        record = MoveRecord(move, self._board.san(move), self._board.fullmove_number, self._board.turn)
+        record = MoveRecord(move, self._board.san(move), self._board.fullmove_number, self._board.turn, captured_piece(self._board, move))
         self._board.push(move)
         self._records.append(record)
         self.version += 1
@@ -151,6 +158,9 @@ class ManualGameState:
             else:
                 lines.append(f"{record.move_number}... {record.san}")
         return "\n".join(lines)
+
+    def captures_by(self, color):
+        return tuple(record.captured for record in self._records if record.color == color and record.captured)
 
     def turn_labels(self) -> tuple[str, str]:
         side = "White to move" if self._board.turn == chess.WHITE else "Black to move"

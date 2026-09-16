@@ -1,5 +1,19 @@
 # Changelog and Development Journey
 
+## 3.5
+
+### Added
+- 1 / 5 / 10 / 20-minute clocks for PvP and PvC, with timeout results.
+- Player names, ChessAI identity, and SVG captured-piece displays.
+- Analysis-mode captured-piece display without clocks, and a clickable 47 Lab footer link.
+- Approximate 600–2800 computer difficulty, including controlled selection among evaluated Stockfish moves below its native Elo range.
+
+### Improved
+- Smooth 210 ms piece animation, synchronized castling, and clean capture/promotion transitions.
+- Difficulty-dependent, non-blocking ChessAI thinking time that counts against its clock.
+- Requested-difficulty reporting, sidebar readability, and orientation-aware player bars.
+- Existing PvP/PvC evaluation, suggestions, and undo/redo options remain available. Undo/redo restores board history, not elapsed clock time.
+
 ## 2.5 — Game modes
 
 ### Added

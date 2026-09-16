@@ -8,14 +8,15 @@ import time
 from pathlib import Path
 
 import chess
-from PySide6.QtCore import QSettings, Qt, QTimer, QEvent
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import QSettings, Qt, QTimer, QEvent, QUrl
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QDesktopServices
 from PySide6.QtWidgets import QApplication, QBoxLayout, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget, QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox, QAbstractItemView
 
 from app.ai.board_recognizer import RecognitionWorker
 from app.ai.openai_client import OpenAIClient, resolve_model
 from app.chess.coordinates import Orientation
-from app.chess.game_mode import GameMode, GameOptions, remaining_move_delay
+from app.chess.game_mode import GameMode, GameOptions, remaining_move_delay, thinking_delay_ms
+from app.chess.game_clock import GameClock, timeout_result
 from app.chess.game_state import (
     ManualGameState,
     apply_castling_rights,
@@ -35,6 +36,7 @@ from app.ui.region_selector import RegionSelector
 from app.ui.settings import SettingsDialog
 from app.ui.setup_dialog import PositionSetupDialog
 from app.ui.new_game_dialog import NewGameDialog
+from app.ui.player_bar import PlayerBar
 from app.vision.capture import ScreenCapture, validated_board_crop
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -90,6 +92,27 @@ QToolTip { color: #eef2ef; background: #34413f; border: 1px solid #586b61; paddi
 """
 
 
+class BrandingLabel(QLabel):
+    """Keep the existing footer typography and geometry; add link behavior only."""
+    def __init__(self):
+        super().__init__("Built by 47 Lab")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setToolTip("https://fortysevenlab.com")
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            QDesktopServices.openUrl(QUrl("https://fortysevenlab.com"))
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            QDesktopServices.openUrl(QUrl("https://fortysevenlab.com"))
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+
 class TransientStatusLabel(QLabel):
     """Small operational feedback strip that disappears when no longer useful."""
 
@@ -129,6 +152,13 @@ class MainWindow(QMainWindow):
         self.openai_client = OpenAIClient(self.model)
         self.game = ManualGameState()
         self.game_options = GameOptions()
+        self.clock = None
+        self._timeout = ""
+        self._setup_open = False
+        self._thinking_target_ms = 800
+        self._clock_timer = QTimer(self)
+        self._clock_timer.setInterval(100)
+        self._clock_timer.timeout.connect(self._clock_tick)
         self.play_worker = None
         self.play_token = 0
         self._play_request = None
@@ -154,7 +184,7 @@ class MainWindow(QMainWindow):
         self.layout_mode = "wide"
         logging.info("APP_START")
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=%s", self.model, "settings" if stored_model else "environment_or_default")
-        self.setWindowTitle("Chess Vision 2.5")
+        self.setWindowTitle("Chess Vision 3.5")
         icon_path = resource_path("assets", "icons", "chess-vision.ico")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -198,7 +228,52 @@ class MainWindow(QMainWindow):
         return self.mode == GameMode.ANALYSIS or self.game_options.allow_history
 
     def _computer_turn(self):
-        return self.mode == GameMode.VS_COMPUTER and self.board.turn != self.player_color and not self.board.is_game_over()
+        return self.mode == GameMode.VS_COMPUTER and self.board.turn != self.player_color and not self.board.is_game_over() and not self._timeout
+
+    def _clock_tick(self):
+        if self.clock is None or self._closing:
+            return
+        flagged = self.clock.settle()
+        if flagged is not None and not self._timeout:
+            self._timeout = timeout_result(self.board, flagged)
+            self.clock.pause()
+            self._clock_timer.stop()
+            self._invalidate_play(retire=True)
+            self.analysis_token += 1
+            self._retire_engine()
+            self.view.set_board(self.board)
+            self.view.arrow = None
+            self._update_position()
+        else:
+            self._update_player_bars()
+
+    def _sync_clock(self):
+        if not self.clock:
+            return
+        paused = (self._closing or self._setup_open or self._timeout or self.board.is_game_over()
+                  or self._play_error or (self._computer_turn() and self._play_request is None))
+        if paused:
+            self.clock.pause()
+        else:
+            self.clock.switch(self.board.turn)
+        self._clock_tick()
+
+    def _update_player_bars(self):
+        visible = self.mode == GameMode.ANALYSIS or self.clock is not None
+        for bar in (self.top_player, self.bottom_player):
+            bar.setVisible(visible)
+        if not visible:
+            return
+        names = {chess.WHITE: self.game_options.white_name.strip() or "White",
+                 chess.BLACK: self.game_options.black_name.strip() or "Black"}
+        if self.mode == GameMode.VS_COMPUTER:
+            names[self.player_color] = self.game_options.human_name.strip() or "Player"
+            names[not self.player_color] = "ChessAI"
+        top = chess.WHITE if self.view.flipped else chess.BLACK
+        for bar, color in ((self.top_player, top), (self.bottom_player, not top)):
+            bar.set_player(names[color], self.game.captures_by(color),
+                           self.clock.remaining_ms[color] if self.clock else None,
+                           self.clock.active == color if self.clock else False)
 
     def _invalidate_play(self, retire=False):
         self.play_token += 1
@@ -212,12 +287,13 @@ class MainWindow(QMainWindow):
                 self._release_engine(worker)
 
     def _request_computer(self):
-        if self._closing or not self._computer_turn() or self._play_request is not None:
+        if self._closing or self._setup_open or not self._computer_turn() or self._play_request is not None:
             return
         self._play_error = ""
         self.play_token += 1
         token = self.play_token
         self._play_request = (token, self.game.version, time.monotonic())
+        self._thinking_target_ms = thinking_delay_ms(self.game_options.elo)
         if not self.play_worker or not self.play_worker.isRunning():
             self.play_worker = EngineWorker(self.engine_path, self.analysis_ms / 1000,
                                             play_elo=self.game_options.elo)
@@ -230,7 +306,7 @@ class MainWindow(QMainWindow):
         self._update_position()
 
     def _valid_play_result(self, token):
-        return (not self._closing and self._play_request is not None
+        return (not self._closing and not self._setup_open and self._play_request is not None
                 and token == self.play_token == self._play_request[0]
                 and self.game.version == self._play_request[1] and self._computer_turn())
 
@@ -242,10 +318,11 @@ class MainWindow(QMainWindow):
             return
         move, effective_elo = result
         self._effective_elo = effective_elo
-        delay = remaining_move_delay(self._play_request[2], time.monotonic())
+        delay = remaining_move_delay(self._play_request[2], time.monotonic(), self._thinking_target_ms)
         QTimer.singleShot(delay, lambda: self._apply_computer_move(token, move))
 
     def _apply_computer_move(self, token, move):
+        self._clock_tick()
         if not self._valid_play_result(token) or move not in self.board.legal_moves:
             return
         before = self.board.copy(stack=True)
@@ -297,6 +374,11 @@ class MainWindow(QMainWindow):
         self.view.move_requested.connect(self.commit_manual_move)
         self.eval_bar = EvaluationBar()
         self.board_host = SquareBoardHost(self.view, evaluation_bar=self.eval_bar)
+        self.top_player = PlayerBar(self.view, self.board_host)
+        self.bottom_player = PlayerBar(self.view, self.board_host)
+        self.board_host.player_bars = (self.top_player, self.bottom_player)
+        self.top_player.hide()
+        self.bottom_player.hide()
         self.body.addWidget(self.board_host, 1)
         self.panel = AnalysisPanel()
         self.panel.undo_requested.connect(self.undo)
@@ -313,7 +395,7 @@ class MainWindow(QMainWindow):
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(2, 0, 2, 0)
         footer_layout.addWidget(self.status, 1)
-        brand = QLabel("Built by 47 Lab")
+        brand = BrandingLabel()
         brand.setObjectName("muted")
         brand.setAlignment(Qt.AlignRight)
         brand.setStyleSheet("font-size: 10px; color: rgba(152,163,158,145); padding-right: 2px;")
@@ -404,7 +486,7 @@ class MainWindow(QMainWindow):
             worker.deleteLater()
 
     def analyze(self):
-        if self._closing:
+        if self._closing or self._timeout:
             return
         self.analysis_token += 1
         token = self.analysis_token
@@ -460,6 +542,7 @@ class MainWindow(QMainWindow):
         self.status.setText("Stockfish not configured — manual board is ready")
 
     def _update_position(self, ready=False):
+        self._sync_clock()
         owner, turn = self.game.turn_labels()
         self.panel.set_player(self.game.player_color)
         self.panel.set_position("Ready" if ready else owner, turn, self.game.outcome_status())
@@ -469,29 +552,35 @@ class MainWindow(QMainWindow):
             self.panel.playing_label.setText("Local two-player" if self.mode == GameMode.LOCAL_PVP
                                             else f"You: {'White' if self.player_color else 'Black'}")
             state = self.game.outcome_status()
-            if self._play_error:
+            if self._timeout:
+                state = self._timeout
+            elif self._play_error:
                 state = self._play_error
             elif self._play_request is not None:
-                state = "Computer thinking…"
+                state = "ChessAI is thinking…"
             elif self.board.is_game_over():
                 outcome = self.board.outcome()
                 state = "Draw" if outcome.winner is None else ("White wins" if outcome.winner else "Black wins")
             elif self._computer_turn():
                 state = "History paused · Redo or New Game"
             elif self.mode == GameMode.VS_COMPUTER:
-                rating = self._effective_elo or self.game_options.elo
-                state = f"Computer · Elo {rating}"
-                if self._effective_elo is not None and rating != self.game_options.elo:
-                    state += f" (engine limit; requested {self.game_options.elo})"
+                state = f"ChessAI · ~{self.game_options.elo} Elo"
             self.panel.set_position(self.mode.value, turn, state)
+            self.panel.state_label.setToolTip(self._play_error or "Computer strength is approximate, not a rated Elo. Undo/redo changes the board, not elapsed clock time.")
         self.panel.scan_button.setEnabled(self.mode == GameMode.ANALYSIS)
         self.panel.scan_button.setToolTip("Scan positions in Analysis mode" if self.mode != GameMode.ANALYSIS else "Scan Board")
-        self.view.setEnabled(not self._computer_turn() and (self.mode == GameMode.ANALYSIS or not self.board.is_game_over()))
+        self.view.setEnabled(not self._timeout and not self._setup_open and not self._computer_turn() and (self.mode == GameMode.ANALYSIS or not self.board.is_game_over()))
         # Analysis preserves the inactive-bar behavior from 2.47.
         self.eval_bar.setVisible(self.mode == GameMode.ANALYSIS or self.show_evaluation)
+        self._update_player_bars()
         self.board_host.arrange_board()
 
     def load_position(self, board, player_color, side_to_move, imported=True, castling_rights=()):
+        if self.clock:
+            self.clock.pause()
+        self._clock_timer.stop()
+        self.clock = None
+        self._timeout = ""
         self._invalidate_play(retire=True)
         self._history_groups.clear()
         self._play_error = ""
@@ -505,6 +594,9 @@ class MainWindow(QMainWindow):
             apply_castling_rights(loaded, castling_rights)
             loaded.ep_square = None
         self.game.load(loaded, player_color)
+        if self.mode != GameMode.ANALYSIS:
+            self.clock = GameClock(self.game_options.minutes)
+            self._clock_timer.start()
         self.has_imported_position = imported
         self.view.set_orientation(Orientation.WHITE_BOTTOM if player_color else Orientation.BLACK_BOTTOM)
         self.eval_bar.set_flipped(self.view.flipped)
@@ -517,13 +609,17 @@ class MainWindow(QMainWindow):
         self.analyze()
 
     def commit_manual_move(self, source, target):
-        if self._closing or self._computer_turn() or (self.mode != GameMode.ANALYSIS and self.board.is_game_over()):
+        self._clock_tick()
+        if self._closing or self._setup_open or self._timeout or self._computer_turn() or (self.mode != GameMode.ANALYSIS and self.board.is_game_over()):
             return False
         promotion = None
         if self.game.promotion_options(source, target):
             promotion = PromotionDialog.choose(self.board.turn, self)
             if promotion is None:
                 self.view.clear_selection()
+                return False
+            self._clock_tick()
+            if self._timeout:
                 return False
         before = self.board.copy(stack=True)
         try:
@@ -543,6 +639,7 @@ class MainWindow(QMainWindow):
         return True
 
     def undo(self):
+        self._clock_tick()
         if not self.history_allowed or not self.game.can_undo:
             return False
         self._invalidate_play()
@@ -564,6 +661,7 @@ class MainWindow(QMainWindow):
         return True
 
     def redo(self):
+        self._clock_tick()
         if not self.history_allowed or not self.game.can_redo:
             return False
         self._invalidate_play()
@@ -576,17 +674,26 @@ class MainWindow(QMainWindow):
         if not record:
             return False
         self._invalidate_scan()
-        self.view.animate_move(before, record.move, self.board)
+        self.view.animate_move(before, record.move, self.board, duration=100)
         self._update_position()
         logging.info("REDO san=%s fen=%s", record.san, self.board.fen())
         self.analyze()
         return True
 
     def new_game(self):
+        self._clock_tick()
+        self._setup_open = True
+        self._invalidate_play(retire=True)
+        if self.clock:
+            self.clock.pause()
         dialog = NewGameDialog(self, self.game_options)
-        if not dialog.exec():
-            return
-        self.start_game(dialog.values())
+        accepted = dialog.exec()
+        self._setup_open = False
+        if accepted:
+            self.start_game(dialog.values())
+        else:
+            self._request_computer()
+            self._update_position()
 
     def start_game(self, options):
         self.game_options = options
@@ -600,6 +707,7 @@ class MainWindow(QMainWindow):
     def flip_board(self):
         self.view.flip()
         self.eval_bar.set_flipped(self.view.flipped)
+        self._update_player_bars()
 
     def pulse_best_move(self):
         if not self.view.arrow:
@@ -820,6 +928,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if not self._closing:
             self._closing = True
+            if self.clock:
+                self.clock.pause()
+            self._clock_timer.stop()
             self._invalidate_play(retire=True)
             self.analysis_token += 1
             self._engine_generation += 1

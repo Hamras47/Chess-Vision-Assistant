@@ -25,6 +25,7 @@ PIECE_NAMES = {
 
 class ChessBoardWidget(QWidget):
     move_requested = Signal(int, int)
+    animation_completed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,6 +45,8 @@ class ChessBoardWidget(QWidget):
         self._animated_move: chess.Move | None = None
         self._animated_piece: chess.Piece | None = None
         self._animation_progress = 1.0
+        self._animation_before = None
+        self._moving_pieces = []
         self.setMinimumSize(180, 180)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
@@ -59,7 +62,7 @@ class ChessBoardWidget(QWidget):
         self.clear_selection()
         self.update()
 
-    def animate_move(self, before: chess.Board, move: chess.Move, after: chess.Board):
+    def animate_move(self, before: chess.Board, move: chess.Move, after: chess.Board, duration=210):
         self._stop_animation()
         self.board = after
         self.last_move = move
@@ -67,8 +70,17 @@ class ChessBoardWidget(QWidget):
         self.clear_selection()
         self._animated_move = move
         self._animated_piece = before.piece_at(move.from_square)
+        self._animation_before = before.copy(stack=False)
+        self._moving_pieces = [(move.from_square, move.to_square, self._animated_piece)]
+        if before.is_castling(move):
+            rank = chess.square_rank(move.from_square)
+            kingside = move.to_square > move.from_square
+            source = chess.square(7 if kingside else 0, rank)
+            target = chess.square(5 if kingside else 3, rank)
+            self._moving_pieces.append((source, target, before.piece_at(source)))
+        self._animation_progress = 0.0
         animation = QVariantAnimation(self)
-        animation.setDuration(150)
+        animation.setDuration(duration)
         animation.setStartValue(0.0)
         animation.setEndValue(1.0)
         animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -90,12 +102,22 @@ class ChessBoardWidget(QWidget):
         self.update()
 
     def _animation_finished(self):
+        was_animating = self._animated_move is not None
         self._animation_progress = 1.0
         self._animated_move = None
         self._animated_piece = None
+        self._animation_before = None
+        self._moving_pieces = []
         self.update()
+        if was_animating:
+            self.animation_completed.emit()
+
+    def resizeEvent(self, event):
+        self._stop_animation()
+        super().resizeEvent(event)
 
     def set_orientation(self, orientation: Orientation):
+        self._stop_animation()
         self.orientation = Orientation(orientation)
         self.clear_selection()
         self.update()
@@ -307,9 +329,10 @@ class ChessBoardWidget(QWidget):
                         painter.setBrush(QColor(25, 42, 35, 105))
                         painter.drawEllipse(rect.center(), size * 0.11, size * 0.11)
 
-                piece = self.board.piece_at(square)
+                rendered = self._animation_before if self._animation_before is not None else self.board
+                piece = rendered.piece_at(square)
                 hide_for_drag = self._dragging and square == self.selected
-                hide_for_animation = self._animated_move is not None and square == self._animated_move.to_square
+                hide_for_animation = any(source == square for source, _, _ in self._moving_pieces)
                 if piece and not hide_for_drag and not hide_for_animation:
                     self._draw_piece(painter, piece, rect, size)
 
@@ -323,11 +346,12 @@ class ChessBoardWidget(QWidget):
 
         self._draw_arrow(painter, size)
 
-        if self._animated_move and self._animated_piece:
-            source = self._rect_for(self._animated_move.from_square)
-            target = self._rect_for(self._animated_move.to_square)
-            point = source.topLeft() + (target.topLeft() - source.topLeft()) * self._animation_progress
-            self._draw_piece(painter, self._animated_piece, QRectF(point.x(), point.y(), size, size), size)
+        if self._moving_pieces:
+            for source_square, target_square, piece in self._moving_pieces:
+                source = self._rect_for(source_square)
+                target = self._rect_for(target_square)
+                point = source.topLeft() + (target.topLeft() - source.topLeft()) * self._animation_progress
+                self._draw_piece(painter, piece, QRectF(point.x(), point.y(), size, size), size)
         elif self._dragging and self.selected is not None:
             piece = self.board.piece_at(self.selected)
             if piece:
@@ -347,6 +371,7 @@ class SquareBoardHost(QWidget):
         self.board = board
         self.board.setParent(self)
         self.evaluation_bar = evaluation_bar
+        self.player_bars = None
         if evaluation_bar is not None:
             evaluation_bar.setParent(self)
         self.setMinimumSize(180, 180)
@@ -358,9 +383,13 @@ class SquareBoardHost(QWidget):
 
     def arrange_board(self):
         gutter = 40 if self.evaluation_bar is not None and not self.evaluation_bar.isHidden() else 0
-        side = max(0, min(self.width() - gutter, self.height()))
+        bars = self.player_bars is not None and not self.player_bars[0].isHidden()
+        side = max(0, min(self.width() - gutter, self.height() - (64 if bars else 0)))
         left = (self.width() - side - gutter) // 2 + gutter
         top = (self.height() - side) // 2
         self.board.setGeometry(left, top, side, side)
         if self.evaluation_bar is not None:
             self.evaluation_bar.setGeometry(left - gutter + 4, top + 4, 30, max(0, side - 8))
+        if bars:
+            self.player_bars[0].setGeometry(left + 4, top - 30, side - 8, 28)
+            self.player_bars[1].setGeometry(left + 4, top + side + 2, side - 8, 28)

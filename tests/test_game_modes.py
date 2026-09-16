@@ -97,6 +97,7 @@ def test_presentation_delay(elapsed, expected):
 
 
 def test_timer_result_does_not_commit_immediately(window, monkeypatch):
+    monkeypatch.setattr("app.ui.main_window.thinking_delay_ms", lambda elo: 1000)
     window.start_game(GameOptions(GameMode.VS_COMPUTER, color="Black"))
     started = window._play_request[2]
     monkeypatch.setattr("app.ui.main_window.time.monotonic", lambda: started + 0.12)
@@ -104,7 +105,7 @@ def test_timer_result_does_not_commit_immediately(window, monkeypatch):
     monkeypatch.setattr("app.ui.main_window.QTimer.singleShot", lambda delay, callback: scheduled.append((delay, callback)))
     window._computer_done(window.play_token, (chess.Move.from_uci("e2e4"), 1400))
     assert not window.board.move_stack
-    assert 679 <= scheduled[0][0] <= 681
+    assert 879 <= scheduled[0][0] <= 881
     scheduled[0][1]()
     assert window.board.peek().uci() == "e2e4"
 
@@ -223,7 +224,8 @@ def test_native_strength_and_clamp():
     }, configure=calls.append)
     assert configure_play_strength(engine, 1400) == 1400
     assert calls[-1] == {"UCI_LimitStrength": True, "UCI_Elo": 1400}
-    assert configure_play_strength(engine, 800) == 1320
+    assert configure_play_strength(engine, 800) == 800
+    assert calls[-1] == {"UCI_LimitStrength": False, "UCI_Elo": 1320}
     with pytest.raises(ValueError, match="Adjustable Elo is unavailable"):
         configure_play_strength(SimpleNamespace(options={}), 1400)
 
