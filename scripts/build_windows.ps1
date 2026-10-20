@@ -10,6 +10,7 @@ foreach ($target in @("build", "dist")) {
     }
 }
 
+if (-not (Test-Path -LiteralPath (Join-Path $projectRoot "engine\stockfish.exe"))) { & (Join-Path $PSScriptRoot "fetch_stockfish.ps1") }
 python -m PyInstaller --clean --noconfirm ChessVision.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 

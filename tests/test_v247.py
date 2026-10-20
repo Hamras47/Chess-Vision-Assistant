@@ -141,21 +141,21 @@ def test_toggle_history_stale_results(window):
 def test_model_toggle_persist_and_next_scan(window, monkeypatch):
     monkeypatch.setattr(SettingsDialog, "exec", lambda self: (self.model.setCurrentIndex(1), self.suggestions.setChecked(False), 1)[-1])
     window.open_settings()
-    assert window.settings.value("ai_model") == "gpt-5.6-luna"
-    assert window.openai_client.model == "gpt-5.6-luna"
+    assert window.settings.value("ai_model") == "gpt-5.6-terra"
+    assert window.openai_client.model == "gpt-5.6-terra"
     restarted = MainWindow()
     try:
-        assert restarted.model == "gpt-5.6-luna"
+        assert restarted.model == "gpt-5.6-terra"
         assert not restarted.suggestions_enabled
         monkeypatch.setattr(SettingsDialog, "exec", lambda self: (self.model.setCurrentIndex(0), self.suggestions.setChecked(True), 1)[-1])
         restarted.open_settings()
-        assert restarted.model == "gpt-5.6-terra"
+        assert restarted.model == "gpt-6-luna"
         assert restarted.suggestions_enabled
     finally:
         restarted.close()
 
 
-@pytest.mark.parametrize("model", ["gpt-5.6-terra", "gpt-5.6-luna"])
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-5.6-terra"])
 def test_exact_request_routing(model):
     calls = []
     client = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: (calls.append(kwargs), SimpleNamespace(output_text='{}'))[1]))
@@ -164,8 +164,8 @@ def test_exact_request_routing(model):
 
 
 def test_model_fallback():
-    assert resolve_model("bad", {}) == "gpt-5.6-terra"
-    assert resolve_model("gpt-5.6-luna", {"OPENAI_VISION_MODEL": "gpt-5.6-terra"}) == "gpt-5.6-luna"
+    assert resolve_model("bad", {}) == "gpt-6-luna"
+    assert resolve_model("gpt-6-luna", {"OPENAI_VISION_MODEL": "gpt-5.6-terra"}) == "gpt-6-luna"
 
 
 def test_eval_mapping_and_mate(window):

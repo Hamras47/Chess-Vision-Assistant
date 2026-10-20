@@ -1,5 +1,14 @@
 # Changelog and Development Journey
 
+## 3.6
+
+### Changed
+- Board recognition now defaults to **GPT-6 Luna** (`gpt-6-luna`); GPT-5.6 Terra remains selectable. A saved GPT-5.6 Luna choice moves to GPT-6 Luna.
+- Stockfish 19 ships inside the Windows build (`engine/stockfish.exe`), so analysis and PvC work without a separate download. A Stockfish path chosen in Settings still takes precedence.
+
+### Added
+- `scripts/fetch_stockfish.ps1` downloads the official Stockfish release into `engine/`; the Windows build script runs it when the engine is missing.
+
 ## 3.5
 
 ### Added

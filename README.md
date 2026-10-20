@@ -24,10 +24,10 @@ The `python-chess` board is the source of truth. OpenAI vision reconstructs a se
 - Local asynchronous Stockfish best move, evaluation, and arrow
 - Left/Right arrow-key undo/redo with exact chess-state restoration
 - Animated White-perspective evaluation bar beside the board
-- Terra/Luna recognition selection and a persistent Stockfish Suggestions toggle
+- GPT-6 Luna (default) / GPT-5.6 Terra recognition selection and a persistent Stockfish Suggestions toggle
 - Responsive wide and split-screen layouts with board flipping
 - Windows Credential Manager storage for each user's API key
-- No bundled API key, Stockfish binary, ML runtime, or browser tracking
+- Stockfish 19 bundled; no bundled API key, ML runtime, or browser tracking
 
 ## Screenshots
 
@@ -65,7 +65,7 @@ See [Architecture](docs/ARCHITECTURE.md) for the real component flow.
 
 ## Download for Windows
 
-Go to [Chess Vision 3.5](https://github.com/Hamras47/Chess-Vision-Assistant/releases/tag/v3.5) and download `ChessVision-Windows-x64.zip`.
+Go to [Chess Vision 3.6](https://github.com/Hamras47/Chess-Vision-Assistant/releases/tag/v3.6) and download `ChessVision-Windows-x64.zip`.
 
 Extract the ZIP, open the `ChessVision` folder, and run `ChessVision.exe`. No Python installation or command prompt is required. In **Settings**, add your own OpenAI API key for board scanning and select your separately installed Stockfish executable for analysis.
 
@@ -79,7 +79,7 @@ Open **Settings**, enter your own key, select **Test Connection**, then **Save**
 
 ### Stockfish Setup
 
-Stockfish is an independent open-source UCI engine. Download Windows Stockfish from the [official download page](https://stockfishchess.org/download/), extract it, then choose `stockfish.exe` with **Settings → Browse → Test Engine**. Analysis remains local. Stockfish is GPLv3 and is not bundled.
+Stockfish 19 is bundled in the Windows build (`engine/stockfish.exe`) and is found automatically. In a source checkout, run `scripts/fetch_stockfish.ps1` once to download the official release into `engine/`. To use a different build, choose its `stockfish.exe` with **Settings → Browse → Test Engine**; that choice takes precedence. Analysis remains local. Stockfish is an independent GPLv3 engine; its license ships as `engine/Stockfish-COPYING.txt` and its source is at <https://github.com/official-stockfish/Stockfish>.
 
 ## User Guide
 
@@ -111,7 +111,7 @@ Confirmed player color sets initial orientation. **Flip** or `F` rotates display
 
 ## Settings
 
-Settings groups AI recognition, the chess engine, and application information. Select **GPT-5.6 Terra** (default) or **GPT-5.6 Luna**. Terra balances intelligence and cost; Luna is the lighter, lower-cost option. The saved model takes precedence over `OPENAI_VISION_MODEL`, then the Terra default. Unsupported saved values fall back to the environment/default. Exact API IDs: `gpt-5.6-terra`, `gpt-5.6-luna` ([official model catalog](https://developers.openai.com/api/docs/models)). Account access still depends on your API project.
+Settings groups AI recognition, the chess engine, and application information. Select **GPT-6 Luna** (default) or **GPT-5.6 Terra**. The saved model takes precedence over `OPENAI_VISION_MODEL`, then the GPT-6 Luna default. Unsupported saved values fall back to the environment/default. Exact API IDs: `gpt-6-luna`, `gpt-5.6-terra` ([official model catalog](https://developers.openai.com/api/docs/models)). Account access still depends on your API project.
 
 In Analysis mode, **Stockfish Suggestions** defaults to On. Off stops automatic analysis and hides arrows, with a neutral dimmed evaluation bar. PvP/PvC use their independent New Game learning-tool options. API keys stay in the OS credential store; they are never written to QSettings or packaged files.
 
@@ -175,7 +175,7 @@ Chess Vision Assistant is licensed under [GNU GPL version 3 or later](LICENSE). 
 
 ## Credits
 
-- [Stockfish](https://stockfishchess.org/) community — engine, GPLv3 (not bundled)
+- [Stockfish](https://stockfishchess.org/) community — engine, GPLv3 (bundled, unmodified)
 - [python-chess](https://python-chess.readthedocs.io/) — rules/UCI, GPL-3.0-or-later
 - Qt for Python / PySide6 — UI, LGPLv3/GPLv3/commercial
 - Cburnett pieces — CC BY-SA 3.0, adapted palette; see `assets/pieces/README.md`

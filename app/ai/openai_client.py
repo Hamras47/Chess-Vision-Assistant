@@ -2,16 +2,16 @@ import os, json, base64, time, logging
 from dotenv import load_dotenv
 from app.core.credentials import CredentialStore, resolve_openai_key
 load_dotenv()
-DEFAULT_OPENAI_VISION_MODEL = 'gpt-5.6-terra'
-# Verified against the official OpenAI model catalog, September 2026.
-VISION_MODELS = {'gpt-5.6-terra': 'GPT-5.6 Terra', 'gpt-5.6-luna': 'GPT-5.6 Luna'}
+DEFAULT_OPENAI_VISION_MODEL = 'gpt-6-luna'
+# Verified against the official OpenAI model catalog, October 2026.
+VISION_MODELS = {'gpt-6-luna': 'GPT-6 Luna', 'gpt-5.6-terra': 'GPT-5.6 Terra'}
 class AIError(RuntimeError): pass
 def normalize_model(model):
  """Return the configured API model verbatim, with only an empty value defaulted."""
  return str(model or '').strip() or DEFAULT_OPENAI_VISION_MODEL
 
 def resolve_model(settings_model=None, environment=None):
- """Supported saved choice, developer environment override, then Terra.
+ """Supported saved choice, developer environment override, then GPT-6 Luna.
 
  An invalid saved value is ignored; environment overrides remain explicit API IDs.
  """

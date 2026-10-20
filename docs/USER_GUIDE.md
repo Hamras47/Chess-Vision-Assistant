@@ -1,6 +1,6 @@
 # Chess Vision User Guide
 
-## Chess Vision 3.5
+## Chess Vision 3.6
 
 ### Choose a game
 
@@ -34,7 +34,7 @@ Use **Left Arrow** to undo and **Right Arrow** to redo, or Ctrl+Z/Ctrl+Y. Analys
 
 The evaluation bar sits beside the board. Positive values favor White and negative values favor Black, even when you play Black or flip the board. `M3` means White mates in three; `-M2` means Black mates in two. The smooth bounded bar is an advantage indicator, not a predicted win percentage.
 
-In **Settings → AI Recognition**, choose **GPT-5.6 Terra** or **GPT-5.6 Luna**. Terra is the default for new configurations and balances intelligence and cost; Luna is the lighter, lower-cost option. Existing explicit Luna choices remain saved. Your chosen model is used for the next scan. API project permissions determine availability.
+In **Settings → AI Recognition**, choose **GPT-6 Luna** or **GPT-5.6 Terra**. GPT-6 Luna is the default; a saved GPT-5.6 Luna choice moves to GPT-6 Luna. Your chosen model is used for the next scan. API project permissions determine availability.
 
 In Analysis mode, **Settings → Chess Engine → Stockfish Suggestions** controls automatic analysis. Off removes arrows and dims the bar; manual moves and scanning still work. PvP/PvC use the learning-tool switches in New Game instead.
 
@@ -42,7 +42,7 @@ Scanning validates the image before sending it. A blank or invalid screenshot ge
 
 ## Installation and first launch
 
-When available on the project's release page, download the **complete Windows distribution ZIP** and extract it. Open the extracted `ChessVision` folder and double-click `ChessVision.exe`. Keep its `_internal` folder and license files beside it; the EXE alone is not a standalone application. If no binary release is listed, follow the README's build instructions. Chess Vision opens with a normal starting position; manual play works without an OpenAI key or Stockfish.
+When available on the project's release page, download the **complete Windows distribution ZIP** and extract it. Open the extracted `ChessVision` folder and double-click `ChessVision.exe`. Keep its `_internal` folder and license files beside it; the EXE alone is not a standalone application. If no binary release is listed, follow the README's build instructions. Chess Vision opens with a normal starting position; manual play works without an OpenAI key, and Stockfish 19 is included.
 
 ![Main window](screenshots/analysis.png)
 
@@ -54,9 +54,9 @@ Open **Settings**, paste your own OpenAI API key, and select **Save**. The key i
 
 If scanning says that a key is required, choose **Open Settings**. Invalid credentials, timeouts, and network failures are shown without echoing the key.
 
-## Install Stockfish
+## Stockfish
 
-Stockfish is the independent, open-source engine used for local analysis. Download it from [the official Stockfish website](https://stockfishchess.org/download/), extract the archive, then open **Settings** in Chess Vision. Select **Browse**, choose `stockfish.exe`, and select **Test Engine**. A successful check displays “Engine detected.” Stockfish is licensed under GPLv3 and is developed by the Stockfish community; it is not a 47 Lab product and is not bundled with Chess Vision.
+Stockfish is the independent, open-source engine used for local analysis. Stockfish 19 is included in the Windows download and is used automatically. To use a different build, open **Settings**, select **Browse**, choose its `stockfish.exe`, and select **Test Engine**; a successful check displays “Engine detected.” Stockfish is licensed under GPLv3 and is developed by the Stockfish community; it is not a 47 Lab product.
 
 ## Scan and confirm a position
 
@@ -83,7 +83,7 @@ After import, move pieces for both sides by clicking a source and destination or
 
 ## Troubleshooting and privacy
 
-- **No best move:** configure and test Stockfish; manual moves still work without it.
+- **No best move:** check the bundled `engine` folder is intact, or select and test another Stockfish in Settings; manual moves still work without it.
 - **Could not verify board:** select the board edges tightly, avoid overlays, and retry.
 - **Wrong side or orientation:** use Rescan for metadata changes or Flip for display only.
 - **Connection error:** verify internet access and test the key in Settings.

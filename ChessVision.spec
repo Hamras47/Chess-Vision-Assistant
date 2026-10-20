@@ -6,7 +6,7 @@ a = Analysis(
     [str(root / "app" / "main.py")],
     pathex=[str(root)],
     binaries=[],
-    datas=[(str(root / "assets"), "assets")],
+    datas=[(str(root / "assets"), "assets")] + ([(str(root / "engine"), "engine")] if (root / "engine" / "stockfish.exe").is_file() else []),
     hiddenimports=["keyring.backends.Windows"],
     hookspath=[],
     hooksconfig={},

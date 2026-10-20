@@ -9,7 +9,7 @@ Important components:
 - `python-chess`: GPL-3.0-or-later.
 - PySide6 / Qt for Python: LGPLv3/GPLv3/commercial options; a frozen build must preserve applicable Qt notices and LGPL relinking/replacement rights.
 - Cburnett chess piece SVGs: CC BY-SA 3.0; attribution and share-alike terms apply to adaptations in `assets/pieces`.
-- Stockfish: GPLv3. Chess Vision does not bundle it; users select a separately downloaded executable.
+- Stockfish: GPLv3. The Windows build bundles the unmodified official Stockfish 19 executable as a separate program in `engine/`; source: <https://github.com/official-stockfish/Stockfish/tree/sf_19>.
 - Generated Chess Vision icon: generated specifically for this project; no third-party logo was incorporated.
 
-Redistributed binaries must include the license and notices and provide the complete corresponding source for that exact version, including build scripts. The build script collects installed dependency license texts. Qt DLLs remain replaceable in `_internal`; modifications and reverse engineering for debugging those modifications are permitted under the applicable license. Stockfish remains a separate user download.
+Redistributed binaries must include the license and notices and provide the complete corresponding source for that exact version, including build scripts. The build script collects installed dependency license texts. Qt DLLs remain replaceable in `_internal`; modifications and reverse engineering for debugging those modifications are permitted under the applicable license. Stockfish runs as a separate process and can be replaced in Settings.

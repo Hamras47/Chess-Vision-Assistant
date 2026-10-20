@@ -5,12 +5,12 @@ from app.ai.openai_client import DEFAULT_OPENAI_VISION_MODEL,OpenAIClient,resolv
 ROOT=Path(__file__).parents[1]
 
 def test_model_configuration_precedence_and_exact_api_model(monkeypatch):
-    assert DEFAULT_OPENAI_VISION_MODEL=='gpt-5.6-terra'
-    assert resolve_model('',{})=='gpt-5.6-terra'
+    assert DEFAULT_OPENAI_VISION_MODEL=='gpt-6-luna'
+    assert resolve_model('',{})=='gpt-6-luna'
     assert resolve_model('',{'OPENAI_VISION_MODEL':'gpt-5.6-terra'})=='gpt-5.6-terra'
-    assert resolve_model('unsupported',{'OPENAI_VISION_MODEL':'gpt-5.6-terra'})=='gpt-5.6-terra'
-    assert resolve_model('gpt-5.6-luna',{'OPENAI_VISION_MODEL':'gpt-5.6-terra'})=='gpt-5.6-luna'
-    assert OpenAIClient('gpt-5.6-luna').model=='gpt-5.6-luna'
+    assert resolve_model('gpt-5.6-luna',{})=='gpt-6-luna'
+    assert resolve_model('gpt-6-luna',{'OPENAI_VISION_MODEL':'gpt-5.6-terra'})=='gpt-6-luna'
+    assert OpenAIClient('gpt-6-luna').model=='gpt-6-luna'
 
 def test_runtime_has_no_ml_imports_or_dependencies():
     forbidden={'torch','torchvision','onnx','onnxruntime','sklearn'}

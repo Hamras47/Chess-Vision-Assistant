@@ -13,7 +13,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QDesktopServices
 from PySide6.QtWidgets import QApplication, QBoxLayout, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget, QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox, QAbstractItemView
 
 from app.ai.board_recognizer import RecognitionWorker
-from app.ai.openai_client import OpenAIClient, resolve_model
+from app.ai.openai_client import VISION_MODELS, OpenAIClient, resolve_model
 from app.chess.coordinates import Orientation
 from app.chess.game_mode import GameMode, GameOptions, remaining_move_delay, thinking_delay_ms
 from app.chess.game_clock import GameClock, timeout_result
@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
         self.layout_mode = "wide"
         logging.info("APP_START")
         logging.info("OPENAI_MODEL_RESOLVED model=%s source=%s", self.model, "settings" if stored_model else "environment_or_default")
-        self.setWindowTitle("Chess Vision 3.5")
+        self.setWindowTitle("Chess Vision 3.6")
         icon_path = resource_path("assets", "icons", "chess-vision.ico")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -445,6 +445,9 @@ class MainWindow(QMainWindow):
         stored = self.settings.value("stockfish", "", type=str)
         if stored and Path(stored).is_file():
             return stored
+        bundled = resource_path("engine", "stockfish.exe")
+        if bundled.is_file():
+            return str(bundled)
         configured = os.getenv("STOCKFISH_PATH", "")
         if configured and Path(configured).is_file():
             return configured
@@ -824,7 +827,7 @@ class MainWindow(QMainWindow):
                 cv2.imwrite(str(debug_path / "latest_openai_board.png"), crop)
             self.show()
             self.raise_()
-            self.status.setText(f"Reading board with {self.model.removeprefix('gpt-5.6-').title()}…")
+            self.status.setText(f"Reading board with {VISION_MODELS.get(self.model, self.model)}…")
             self.panel.set_position("Scanning…", "One-time position import")
             self._start_recognition(crop, token)
         except Exception:

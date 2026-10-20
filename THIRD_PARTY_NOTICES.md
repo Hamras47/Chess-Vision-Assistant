@@ -10,6 +10,6 @@ Chess Vision 1.6 uses the following third-party software and artwork. This summa
 - **OpenAI Python library**, OpenAI — Apache License 2.0: <https://github.com/openai/openai-python>
 - **keyring**, Python Packaging Authority contributors — MIT License: <https://github.com/jaraco/keyring>
 
-Stockfish is supported as a separately installed user-selected program and is **not bundled**. Stockfish is developed by its independent community under GNU GPLv3: <https://stockfishchess.org/>.
+Stockfish 19 is bundled unmodified as a separate program in `engine/stockfish.exe` and is developed by its independent community under GNU GPLv3: <https://stockfishchess.org/>. Its license is in `engine/Stockfish-COPYING.txt`; corresponding source is at <https://github.com/official-stockfish/Stockfish/tree/sf_19>.
 
 The Windows distribution keeps Qt libraries as separate files in `_internal` rather than statically linking them. The build includes the project `LICENSE`, this notice, and dependency license texts in `licenses/`. Redistributors must also supply corresponding source for the distributed version. Piece artwork retains its attribution and CC BY-SA terms.
